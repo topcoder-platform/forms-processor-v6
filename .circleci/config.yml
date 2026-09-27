@@ -1,0 +1,86 @@
+version: 2.1
+
+jobs:
+  quality:
+    docker:
+      - image: node:26.8.1-bookworm
+      - image: postgres:16-alpine
+        environment:
+          POSTGRES_PASSWORD: forms_local
+          POSTGRES_DB: forms_processor_test
+    environment:
+      TEST_DATABASE_URL: postgresql://postgres:forms_local@localhost:5432/forms_processor_test
+    steps:
+      - checkout
+      - run: npm ci
+      - run:
+          name: Lint, type-check, test routing and retries, and compile
+          command: |
+            npm run lint
+            npm run typecheck
+            npm test
+            npm run test:integration
+            npm run build
+  deploy:
+    docker:
+      - image: cimg/python:3.13.2-browsers
+    parameters:
+      deploy_env:
+        type: enum
+        enum: [DEV, PROD]
+      environment:
+        type: enum
+        enum: [dev, production]
+    environment:
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_STS_REGIONAL_ENDPOINTS: regional
+      APPNAME: forms-processor-v6
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Install deployment dependencies
+          command: pip install boto3 awscli
+      - run:
+          name: Build tested runtime image
+          command: docker build --tag forms-processor-v6:candidate .
+      - run:
+          name: Deploy through CloudFormation
+          no_output_timeout: 35m
+          command: |
+            git clone --quiet --depth 1 --branch v1.4.20 https://github.com/topcoder-platform/tc-deploy-scripts ../buildscript
+            test "$(git -C ../buildscript rev-parse HEAD)" = 5f3745c35463ce0e2475c12269aa7a2b446456e5
+            cp ../buildscript/awsconfiguration.sh .
+            ./awsconfiguration.sh << parameters.deploy_env >>
+            set +x
+            source awsenvconf
+            rm -f awsenvconf awsconfiguration.sh
+            python3 -u deploy/release.py << parameters.environment >> "<< parameters.environment >>-${CIRCLE_SHA1}-${CIRCLE_BUILD_NUM}"
+      - store_artifacts:
+          path: deploy/release-<< parameters.environment >>.json
+          destination: release
+workflows:
+  build-and-deploy:
+    jobs:
+      - quality
+      - deploy:
+          name: deploy-dev
+          context: org-global
+          requires: [quality]
+          deploy_env: DEV
+          environment: dev
+          serial-group: << pipeline.project.slug >>/deploy-dev
+          filters:
+            branches:
+              only: develop
+      - deploy:
+          name: deploy-production
+          context: org-global
+          requires: [quality]
+          deploy_env: PROD
+          environment: production
+          serial-group: << pipeline.project.slug >>/deploy-production
+          filters:
+            branches:
+              only: master

@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-e8f0458d"
+  },
+  {
+    "ParameterKey": "PrivateSubnetIds",
+    "ParameterValue": "subnet-1c8f9b34,subnet-3a498a05"
+  },
+  {
+    "ParameterKey": "DatabaseSecurityGroupId",
+    "ParameterValue": "sg-c31b46a6"
+  },
+  {
+    "ParameterKey": "KafkaSecurityGroupId",
+    "ParameterValue": "sg-e1ecbe84"
+  }
+]

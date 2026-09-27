@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Forms submission processor; private ECS Fargate worker with no public ingress.
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, production]
+  ClusterName:
+    Type: String
+    Default: topcoder-infrastructure
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  DatabaseSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  KafkaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  KafkaPort:
+    Type: Number
+    Default: 9092
+    AllowedValues: [9092, 9094]
+  ImageTag:
+    Type: String
+    Default: bootstrap
+  DesiredCount:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 10
+  DatabaseUrlParameter:
+    Type: String
+    Default: /config/forms-api-v6/appvar/DATABASE_URL
+  KafkaUrlParameter:
+    Type: String
+    Default: /config/common/global-appvar/KAFKA_URL
+  SendGridKeyParameter:
+    Type: String
+    Default: /config/email-service-v6/appvar/SENDGRID_API_KEY
+  SecretsKmsKeyArn:
+    Type: String
+    Default: ""
+Conditions:
+  KafkaTls: !Equals [!Ref KafkaPort, 9094]
+  HasSecretsKmsKey: !Not [!Equals [!Ref SecretsKmsKeyArn, ""]]
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: forms-processor-v6
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: { ScanOnPush: true }
+      EncryptionConfiguration: { EncryptionType: AES256 }
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Retain 30 untagged images","selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":30},"action":{"type":"expire"}}]}'
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/ecs/forms-processor-v6-${Environment}
+      RetentionInDays: 30
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Private forms worker; no inbound application traffic.
+      SecurityGroupEgress:
+        - {
+            IpProtocol: tcp,
+            FromPort: 443,
+            ToPort: 443,
+            CidrIp: 0.0.0.0/0,
+            Description: AWS and SendGrid via NAT,
+          }
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          DestinationSecurityGroupId: !Ref DatabaseSecurityGroupId
+        - IpProtocol: tcp
+          FromPort: !Ref KafkaPort
+          ToPort: !Ref KafkaPort
+          DestinationSecurityGroupId: !Ref KafkaSecurityGroupId
+  DatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref SecurityGroup
+      Description: Forms processor database access
+  KafkaIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref KafkaSecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref KafkaPort
+      ToPort: !Ref KafkaPort
+      SourceSecurityGroupId: !Ref SecurityGroup
+      Description: Forms processor Kafka consumption
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: forms-worker-image-logs-config
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {
+                  Effect: Allow,
+                  Action: "ecr:GetAuthorizationToken",
+                  Resource: "*",
+                }
+              - Effect: Allow
+                Action:
+                  [
+                    ecr:BatchCheckLayerAvailability,
+                    ecr:GetDownloadUrlForLayer,
+                    ecr:BatchGetImage,
+                  ]
+                Resource: !GetAtt Repository.Arn
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt LogGroup.Arn
+              - Effect: Allow
+                Action: ssm:GetParameters
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${DatabaseUrlParameter}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${KafkaUrlParameter}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SendGridKeyParameter}
+              - !If
+                - HasSecretsKmsKey
+                - {
+                    Effect: Allow,
+                    Action: "kms:Decrypt",
+                    Resource: !Ref SecretsKmsKeyArn,
+                  }
+                - !Ref AWS::NoValue
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: forms-processor-v6
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform: { CpuArchitecture: X86_64, OperatingSystemFamily: LINUX }
+      ContainerDefinitions:
+        - Name: forms-processor-v6
+          Image: !Sub ${Repository.RepositoryUri}:${ImageTag}
+          Essential: true
+          ReadonlyRootFilesystem: true
+          StopTimeout: 60
+          LinuxParameters: { InitProcessEnabled: true }
+          Environment:
+            - { Name: NODE_ENV, Value: production }
+            - { Name: KAFKA_GROUP_ID, Value: forms-processor-v6 }
+            - { Name: KAFKA_FROM_BEGINNING, Value: "true" }
+            - {
+                Name: KAFKA_SSL_ENABLED,
+                Value: !If [KafkaTls, "true", "false"],
+              }
+          Secrets:
+            - { Name: DATABASE_URL, ValueFrom: !Ref DatabaseUrlParameter }
+            - { Name: KAFKA_URL, ValueFrom: !Ref KafkaUrlParameter }
+            - { Name: SENDGRID_API_KEY, ValueFrom: !Ref SendGridKeyParameter }
+          HealthCheck:
+            Command:
+              [
+                CMD,
+                node,
+                "-e",
+                "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+              ]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: processor
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: [DatabaseIngress, KafkaIngress]
+    Properties:
+      ServiceName: forms-processor-v6
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      DesiredCount: !Ref DesiredCount
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: { Enable: true, Rollback: true }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref SecurityGroup]
+Outputs:
+  RepositoryUri: { Value: !GetAtt Repository.RepositoryUri }
+  ServiceName: { Value: !GetAtt Service.Name }
+  TaskDefinitionArn: { Value: !Ref TaskDefinition }
+  SecurityGroupId: { Value: !Ref SecurityGroup }

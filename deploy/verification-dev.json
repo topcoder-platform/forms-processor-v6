@@ -1,0 +1,42 @@
+{
+  "verifiedAt": "2026-09-27T23:52:12.452309+00:00",
+  "account": "811668436784",
+  "region": "us-east-1",
+  "stack": "forms-processor-v6-dev",
+  "stackStatus": "UPDATE_COMPLETE",
+  "cluster": "topcoder-infrastructure",
+  "service": "forms-processor-v6",
+  "taskDefinition": "arn:aws:ecs:us-east-1:811668436784:task-definition/forms-processor-v6:3",
+  "image": "811668436784.dkr.ecr.us-east-1.amazonaws.com/forms-processor-v6:dev-initial-20260928-1",
+  "imageDigest": "sha256:374788f17caac29a7d3feb9001c68d1595bad5c1ef5aa0a068222d9e164d714b",
+  "runningCount": 1,
+  "health": "HEALTHY",
+  "migration": {
+    "task": "arn:aws:ecs:us-east-1:811668436784:task/topcoder-infrastructure/7b7c8d5fae94410e9ae5e32d0cc02fae",
+    "definition": "arn:aws:ecs:us-east-1:811668436784:task-definition/forms-api-v6-migrate:5",
+    "image": "811668436784.dkr.ecr.us-east-1.amazonaws.com/forms-api-v6:dev-processor-schema-20260928-1"
+  },
+  "verificationTask": "arn:aws:ecs:us-east-1:811668436784:task/topcoder-infrastructure/e6300f2c4133435abb3ab04ca97433c3",
+  "checks": [
+    {
+      "check": "lets-talk-disabled-TBD",
+      "passed": true
+    },
+    {
+      "check": "form-submitted-topic",
+      "passed": true
+    },
+    {
+      "check": "waiting-for-routing",
+      "seconds": 0
+    },
+    {
+      "check": "live-kafka-dedup-content-routing-disabled-queue",
+      "passed": true,
+      "submissionId": "41bd6d1d-a845-45db-b00e-aef3f813c1c7",
+      "duplicateMessages": 2,
+      "deliveryRecords": 1,
+      "emailAttempts": 0
+    }
+  ]
+}
