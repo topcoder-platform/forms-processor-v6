@@ -47,9 +47,12 @@ def main():
     image = f'{repository}:{tag}'
     subprocess.run(['docker', 'tag', local_image, image], check=True)
     subprocess.run(['docker', 'push', image], check=True)
-    parameters = [{'ParameterKey': key, 'UsePreviousValue': True} for key in settings if key not in ('ImageTag', 'DesiredCount')]
+    template = Path('deploy/service.yaml').read_text()
+    # Preserve only parameters still declared by the new template; additions use defaults.
+    declared = {p['ParameterKey'] for p in cfn.validate_template(TemplateBody=template)['Parameters']}
+    parameters = [{'ParameterKey': key, 'UsePreviousValue': True} for key in settings if key in declared and key not in ('ImageTag', 'DesiredCount')]
     parameters += [{'ParameterKey': 'ImageTag', 'ParameterValue': tag}, {'ParameterKey': 'DesiredCount', 'ParameterValue': str(max(1, int(settings['DesiredCount'])))}]
-    cfn.update_stack(StackName=stack_name, TemplateBody=Path('deploy/service.yaml').read_text(), Parameters=parameters, Capabilities=['CAPABILITY_IAM'])
+    cfn.update_stack(StackName=stack_name, TemplateBody=template, Parameters=parameters, Capabilities=['CAPABILITY_IAM'])
     deadline = time.monotonic() + 1800
     while time.monotonic() < deadline:
         state = cfn.describe_stacks(StackName=stack_name)['Stacks'][0]['StackStatus']

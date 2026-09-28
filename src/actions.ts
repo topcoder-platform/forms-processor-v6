@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Submission } from "./contracts.js";
+import { BusError, type EventPublisher } from "./bus.js";
 
 export interface Action {
   execute(event: Submission, settings: unknown): Promise<void>;
@@ -10,71 +11,58 @@ export const emailSettingsSchema = z
   .object({
     recipients: z.array(z.email()).min(1).max(1000),
     templateId: z.string().regex(/^d-[a-f0-9]{32}$/),
-    fromEmail: z.email(),
+    fromEmail: z.email().nullish(),
     fromName: z.string().max(200).optional(),
   })
   .strict();
 
-/** Sends submission details through a configured SendGrid dynamic template. */
-export class SendGridEmail implements Action {
-  /** Accepts a secret API key, explicit sandbox toggle, and optional HTTP client for tests; never throws. */
-  constructor(
-    private readonly apiKey: string | undefined,
-    private readonly sandbox = false,
-    private readonly request: typeof fetch = fetch,
-  ) {}
+/** Requests email delivery through Bus API's external.action.email topic and email-service-v6. */
+export class BusEmail implements Action {
+  /** Accepts the authenticated event publisher; undefined permits disabled flows before configuration. Never throws. */
+  constructor(private readonly publisher: EventPublisher | undefined) {}
 
-  /** Send one email to the configured list with nested answers/metadata; throws a sanitized ActionError on failure. */
+  /** Publish configured recipients, template, and submission data using the shared v3 email contract.
+   * Optional sender overrides email-service-v6's default. Resolves on Bus API acceptance;
+   * throws a sanitized ActionError for invalid settings, absent configuration, or publication failure.
+   */
   async execute(event: Submission, settings: unknown): Promise<void> {
     const parsed = emailSettingsSchema.safeParse(settings);
     if (!parsed.success) throw new ActionError("invalid_email_settings");
-    if (!this.apiKey) throw new ActionError("missing_sendgrid_key");
+    if (!this.publisher) throw new ActionError("missing_bus_configuration");
     const { recipients, templateId, fromEmail, fromName } = parsed.data;
-    let response: Response;
     try {
-      response = await this.request("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        signal: AbortSignal.timeout(15_000),
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: { email: fromEmail, ...(fromName ? { name: fromName } : {}) },
-          template_id: templateId,
-          personalizations: [
-            {
-              to: [...new Set(recipients.map((x) => x.toLowerCase()))].map(
-                (email) => ({ email }),
-              ),
-              dynamic_template_data: {
-                ...event,
-                fields: Object.entries(event.answers).map(([key, value]) => ({
-                  key,
-                  value: Array.isArray(value)
-                    ? value.join(", ")
-                    : String(value),
-                })),
-              },
-              custom_args: {
-                submissionId: event.submissionId,
-                formKey: event.formKey,
-              },
-            },
+      await this.publisher.postEvent({
+        topic: "external.action.email",
+        originator: "forms-processor-v6",
+        timestamp: new Date().toISOString(),
+        "mime-type": "application/json",
+        key: event.submissionId,
+        payload: {
+          recipients: [
+            ...new Set(recipients.map((email) => email.toLowerCase())),
           ],
-          ...(this.sandbox
-            ? { mail_settings: { sandbox_mode: { enable: true } } }
+          sendgrid_template_id: templateId,
+          version: "v3",
+          ...(fromEmail
+            ? {
+                from: fromName
+                  ? { email: fromEmail, name: fromName }
+                  : fromEmail,
+              }
             : {}),
-        }),
+          data: {
+            ...event,
+            fields: Object.entries(event.answers).map(([key, value]) => ({
+              key,
+              value: Array.isArray(value) ? value.join(", ") : String(value),
+            })),
+          },
+        },
       });
-    } catch {
-      throw new ActionError("sendgrid_network_or_timeout");
+    } catch (error) {
+      throw new ActionError(
+        error instanceof BusError ? error.message : "bus_publish_failed",
+      );
     }
-    // SendGrid returns 200 for sandbox validation and 202 for accepted mail.
-    if (response.status !== 202 && !(this.sandbox && response.status === 200)) {
-      await response.body?.cancel();
-      throw new ActionError(`sendgrid_http_${response.status}`);
-    }
-    await response.body?.cancel();
   }
 }

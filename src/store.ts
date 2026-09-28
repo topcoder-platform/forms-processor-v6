@@ -109,7 +109,7 @@ export class Store {
 
   /** Deliver one pending enabled flow under a row lock; records success or schedules a retry.
    * Returns whether work was found. Action failures are sanitized; DB failures propagate.
-   * A crash after provider acceptance but before commit can resend (at-least-once delivery).
+   * A crash after Bus API acceptance but before commit can resend (at-least-once delivery).
    */
   async deliverOne(): Promise<boolean> {
     return this.transaction(async (client) => {

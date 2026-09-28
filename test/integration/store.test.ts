@@ -23,7 +23,7 @@ const store = new Store(
       {
         execute: async () => {
           calls++;
-          if (fail) throw new ActionError("sendgrid_http_429");
+          if (fail) throw new ActionError("bus_http_429");
         },
       },
     ],
@@ -91,7 +91,7 @@ test("failed delivery retries later and preserves successful per-flow receipts",
     'SELECT * FROM forms."ProcessorDelivery" ORDER BY "flowId"',
   );
   assert.ok(rows[0].deliveredAt);
-  assert.equal(rows[1].lastError, "sendgrid_http_429");
+  assert.equal(rows[1].lastError, "bus_http_429");
   assert.equal(await store.deliverOne(), false);
   fail = false;
   await pool.query(

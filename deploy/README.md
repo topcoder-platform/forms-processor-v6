@@ -15,9 +15,13 @@ The default task is 0.25 vCPU / 512 MiB with a read-only filesystem and graceful
    its VPC, private subnets, database SG, and MSK SG. Dev values are checked in as
    `parameters-dev.json`; supply production's own values, never reuse dev IDs.
 4. Verify these existing SSM values are present: forms API DATABASE_URL, shared
-   KAFKA_URL, and email-service-v6 SENDGRID_API_KEY. Template parameters can instead
-   point to processor-specific paths. The execution role can read only those three
-   exact parameters. Set SecretsKmsKeyArn if they use a customer-managed KMS key.
+   KAFKA_URL, shared AUTH0_URL/AUTH0_AUDIENCE/AUTH0_PROXY_SERVER_URL, and the
+   forms API AUTH0_CLIENT_ID/AUTH0_CLIENT_SECRET. `BusCredentialsPrefix` defaults
+   to `/config/forms-api-v6/appvar` to reuse its Bus-authorized M2M identity; point
+   it to processor-specific credentials when provisioned. That client needs
+   `write:bus_api`. The task receives the environment's `/v6` Bus API base.
+   The execution role permits only the named SSM values and no SendGrid key.
+   Set SecretsKmsKeyArn if these parameters use a customer-managed KMS key.
 5. Build and release. The script pushes an immutable image tag and updates the
    checked-in CloudFormation template while preserving existing stack parameters.
    It waits for CloudFormation stabilization/circuit-breaker rollback and verifies
@@ -51,7 +55,8 @@ To roll back application code, update ImageTag to a previously verified ECR tag 
 CloudFormation, preserving the other parameters. Keep additive DB migrations.
 Do not deploy through the shared master_deploy.sh after adopting this stack, because
 that would change the ECS service outside CloudFormation. Changes to new template
-parameters may require adding their values to release.py or bootstrapping them once.
+parameters without defaults require explicit bootstrap values. Removed parameters
+are filtered when updating the template; new parameters with defaults use those defaults.
 
 API migration source is in the sibling forms-api-v6 repository, not owned or
 silently rerun by this worker. The two repository changes must be released in order.

@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
-import { SendGridEmail } from "./actions.js";
+import { BusEmail } from "./actions.js";
+import { BusApiClient } from "./bus.js";
 import { config } from "./config.js";
 import { consume } from "./consumer.js";
 import { Store, log } from "./store.js";
@@ -22,7 +23,9 @@ async function main(): Promise<void> {
     new Map([
       [
         "sendgrid-email",
-        new SendGridEmail(settings.SENDGRID_API_KEY, settings.SENDGRID_SANDBOX),
+        new BusEmail(
+          settings.busApi ? new BusApiClient(settings.busApi) : undefined,
+        ),
       ],
     ]),
   );
