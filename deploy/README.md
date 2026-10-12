@@ -1,62 +1,93 @@
-# Deployment
+# Deployment to existing ECS services
 
-`service.yaml` owns ECR, CloudWatch, execution/task roles, a private security group,
-database/Kafka ingress rules, task definition, and the `forms-processor-v6` Fargate
-service in `topcoder-infrastructure`. There is no ALB, API Gateway, or public ingress.
-The default task is 0.25 vCPU / 512 MiB with a read-only filesystem and graceful stop.
+CircleCI checks all branches. After quality and deployment tests pass, `develop`
+releases to dev and `master` releases to production using `org-global` and the pinned
+Topcoder AWS credential helper. The deployment registers a new task revision and
+updates **forms-processor-v6** on **topcoder-infrastructure**. It does not create or
+update CloudFormation stacks, services, networking, IAM roles, topics or databases.
 
-1. Apply the forms-api-v6 `20260928020000_processor_flows` migration using that API's
-   normal migration deployment. It adds three tables and a disabled lets-talk flow.
-2. Ensure `form.submitted` exists on MSK before starting the service. Dev uses two
-   partitions and replication factor two. The worker disables topic auto-creation.
-   Provision the topic using your Kafka administration tooling inside the VPC;
-   retain the broker's normal retention policy.
-3. Bootstrap the CloudFormation stack in each account at DesiredCount=0, passing
-   its VPC, private subnets, database SG, and MSK SG. Dev values are checked in as
-   `parameters-dev.json`; supply production's own values, never reuse dev IDs.
-4. Verify these existing SSM values are present: forms API DATABASE_URL, shared
-   KAFKA_URL, shared AUTH0_URL/AUTH0_AUDIENCE/AUTH0_PROXY_SERVER_URL, and the
-   forms API AUTH0_CLIENT_ID/AUTH0_CLIENT_SECRET. `BusCredentialsPrefix` defaults
-   to `/config/forms-api-v6/appvar` to reuse its Bus-authorized M2M identity; point
-   it to processor-specific credentials when provisioned. That client needs
-   `write:bus_api`. The task receives the environment's `/v6` Bus API base.
-   The execution role permits only the named SSM values and no SendGrid key.
-   Set SecretsKmsKeyArn if these parameters use a customer-managed KMS key.
-5. Build and release. The script pushes an immutable image tag and updates the
-   checked-in CloudFormation template while preserving existing stack parameters.
-   It waits for CloudFormation stabilization/circuit-breaker rollback and verifies
-   the retained ECS task definition. Startup checks ensure migration tables exist.
+The existing service and ECR repository must already exist. `release.py` clones
+registerable fields from the service's current task, preserving its roles, resource
+limits, sidecars and other runtime configuration. It replaces the processor image,
+managed SSM references and health check. Existing nonzero replica counts are kept;
+a service at zero is started at one. A service with an in-progress rollout is rejected.
+The script waits for healthy tasks of the requested revision and fails on rollback,
+failed rollout or timeout. It records current/previous task ARNs in a release artifact.
+
+## Runtime parameter sources
+
+Values are injected by ECS at task startup; the release script reads only parameter
+metadata. The task execution role must have `ssm:GetParameters` access to the selected
+parameters and `kms:Decrypt` when a customer-managed key is used.
+
+| Settings | SSM source |
+| --- | --- |
+| `BUSAPI_URL` | `/config/forms-processor-v6/appvar/BUSAPI_URL` (required SecureString; prod `https://api.topcoder.com/v6`, dev `https://api.topcoder-dev.com/v6`) |
+| `LETS_TALK_RECIPIENTS` | `/config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS` (SecureString; comma-separated addresses) |
+| `LETS_TALK_SENDGRID_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID` (SecureString; active `d-` dynamic-template ID) |
+| `DATABASE_URL`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | `/config/forms-api-v6/appvar/` |
+| `AUTH0_URL`, `AUTH0_AUDIENCE`, optional `AUTH0_PROXY_SERVER_URL` | Forms API appvars when present, otherwise `/config/common/global-appvar/` |
+| `KAFKA_URL`, optional `KAFKA_SSL_ENABLED` | `/config/common/global-appvar/` |
+
+Only these named references are imported. The processor does not receive the API's
+migration URL or unrelated shared secrets. If global Kafka TLS is absent, the current
+task setting is preserved (runtime default false); ensure it matches the global broker
+listeners. There are no processor SendGrid credentials: email-service-v6 owns delivery.
+
+The two email parameters may be absent during initial deployment. Their absence
+produces empty runtime email settings; enabling the flow then defers email delivery
+with `invalid_email_settings`. It never falls back to stale database recipients.
+Malformed nonempty values fail startup without exposing values. Create both parameters
+before the email release. **Redeploy after every parameter change** so new tasks read
+new values and newly created parameters are included in the task definition.
+
+The CI role needs ECR push/read, ECS describe/list/register/update, SSM metadata reads,
+and permission to pass the existing task roles. No CloudFormation permissions are
+needed. Accounts are guarded explicitly: dev `811668436784`, production `409275337247`.
+
+## Release and enable Let's Talk
+
+1. Deploy forms-api-v6 migrations, including `20260928020000_processor_flows` and
+   `20261013010000_lets_talk_processor_key`. The second fixes the seed's `lets-talk`
+   mismatch to the website's `lets_talk` key and reroutes retained unmatched events,
+   preserving existing delivery receipts and configuration.
+2. Verify the global brokers are reachable from the existing processor security group,
+   the forms database permits the service, and `form.submitted` exists. The worker
+   disables Kafka topic auto-creation. Its group defaults to `forms-processor-v6`.
+3. Set the processor SecureStrings above. The reused API M2M identity needs
+   `write:bus_api`. Configure an active SendGrid template using
+   [lets-talk-email.json](../examples/lets-talk-email.json) and the README variables.
+4. Merge reviewed changes to develop, then master. The repository must be connected
+   to CircleCI with access to `org-global`. CircleCI builds the tested runtime image
+   and invokes `deploy/release.py production production-COMMIT-BUILD`.
+5. Once healthy, inspect the pending-delivery query in the README. Enabling releases
+   matching queued submissions as well as future ones. Run the reviewed update in
+   [configure-lets-talk.sql](../examples/configure-lets-talk.sql) to enable the flow.
+6. Publish the production form using the API's `scripts/publish-lets-talk.ts`, with
+   `FORMS_API_BASE_URL=https://api.topcoder.com/v6` and a production admin token. Release
+   the website migration only after the public schema and website CORS origin pass.
+7. Submit one clearly identified test through `/lets-talk`. Follow its `submissionId`
+   from the API receipt into `form.submitted`, `ProcessorEvent`, `ProcessorDelivery`,
+   and the `external.action.email` envelope. Verify email-service-v6 accepts the
+   SendGrid request and the designated recipients receive correctly filled emails.
+   `deliveredAt` alone proves only Bus API acceptance, not inbox delivery.
+
+For a manual release of a reviewed image with temporary credentials:
 
 ```sh
-aws cloudformation create-stack --stack-name forms-processor-v6-dev \
-  --template-body file://deploy/service.yaml \
-  --parameters file://deploy/parameters-dev.json --capabilities CAPABILITY_IAM
-aws cloudformation wait stack-create-complete --stack-name forms-processor-v6-dev
-
 docker build -t forms-processor-v6:candidate .
-python3 deploy/release.py dev dev-UNIQUE-RELEASE-ID
+python3 deploy/release.py production production-UNIQUE-RELEASE-ID
 ```
 
-The release script requires Python 3 with boto3, Docker, and an existing stable
-stack. Use inherited temporary AWS credentials; never write them into images or
-the repo.
-Production release requires `PRODUCTION_AWS_ACCOUNT_ID` in the CircleCI project or
-context as an explicit account guard. Dev is restricted to account 811668436784.
-CloudFormation parameters intentionally have no dev-network defaults. Each AWS
-account gets one fixed service/repository name; do not bootstrap two environments
-in the same account under these names.
+Rollback by updating the existing service to the prior task ARN recorded in the
+release artifact. Keep additive API migrations. Disable the flow first if recipient
+or template settings need correction; a send already in progress may finish.
 
-CircleCI uses `org-global`, the pinned `tc-deploy-scripts` v1.4.20 credential helper,
-and serial deployments per environment. The GitHub repository must be connected
-to CircleCI and permitted to use the context. Deployment does not auto-enable any
-email flow. Update the database settings and enable explicitly when ready.
+## Historical CloudFormation bootstrap
 
-To roll back application code, update ImageTag to a previously verified ECR tag in
-CloudFormation, preserving the other parameters. Keep additive DB migrations.
-Do not deploy through the shared master_deploy.sh after adopting this stack, because
-that would change the ECS service outside CloudFormation. Changes to new template
-parameters without defaults require explicit bootstrap values. Removed parameters
-are filtered when updating the template; new parameters with defaults use those defaults.
-
-API migration source is in the sibling forms-api-v6 repository, not owned or
-silently rerun by this worker. The two repository changes must be released in order.
+`service.yaml` and `parameters-dev.json` describe the original dev bootstrap, retained
+for reference. They are no longer applied by CI/CD. Subsequent infrastructure changes
+must preserve the live task reference and desired count: applying an old stack image
+or the old `release.py` procedure can revert a newer ECS release. The dev execution
+role from that bootstrap needs access to the new processor SSM paths before its first
+new release. Provision infrastructure separately if the production service is missing.

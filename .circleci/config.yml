@@ -21,6 +21,13 @@ jobs:
             npm test
             npm run test:integration
             npm run build
+  deployment-checks:
+    docker:
+      - image: cimg/python:3.13.2
+    steps:
+      - checkout
+      - run: pip install boto3
+      - run: python3 -m unittest discover -s deploy/tests
   deploy:
     docker:
       - image: cimg/python:3.13.2-browsers
@@ -46,7 +53,7 @@ jobs:
           name: Build tested runtime image
           command: docker build --tag forms-processor-v6:candidate .
       - run:
-          name: Deploy through CloudFormation
+          name: Deploy a new task revision to the existing ECS service
           no_output_timeout: 35m
           command: |
             git clone --quiet --depth 1 --branch v1.4.20 https://github.com/topcoder-platform/tc-deploy-scripts ../buildscript
@@ -64,10 +71,11 @@ workflows:
   build-and-deploy:
     jobs:
       - quality
+      - deployment-checks
       - deploy:
           name: deploy-dev
           context: org-global
-          requires: [quality]
+          requires: [quality, deployment-checks]
           deploy_env: DEV
           environment: dev
           serial-group: << pipeline.project.slug >>/deploy-dev
@@ -77,7 +85,7 @@ workflows:
       - deploy:
           name: deploy-production
           context: org-global
-          requires: [quality]
+          requires: [quality, deployment-checks]
           deploy_env: PROD
           environment: production
           serial-group: << pipeline.project.slug >>/deploy-production

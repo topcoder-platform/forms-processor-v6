@@ -37,6 +37,12 @@ before(async () => {
       "utf8",
     ),
   );
+  await pool.query(
+    await readFile(
+      new URL("../fixtures/lets-talk-key.sql", import.meta.url),
+      "utf8",
+    ),
+  );
 });
 after(async () => {
   await pool.end();
@@ -80,7 +86,7 @@ test("concurrent workers claim each delivery only once", async () => {
 test("failed delivery retries later and preserves successful per-flow receipts", async () => {
   await pool.query('UPDATE forms."ProcessorFlow" SET enabled = true');
   await pool.query(
-    "INSERT INTO forms.\"ProcessorFlow\" (id, \"formKey\", enabled, action) VALUES ('second', 'lets-talk', true, 'sendgrid-email')",
+    "INSERT INTO forms.\"ProcessorFlow\" (id, \"formKey\", enabled, action) VALUES ('second', 'lets_talk', true, 'sendgrid-email')",
   );
   await store.enqueue(event);
   await store.routeOne();
@@ -141,10 +147,81 @@ test("re-routing preserves successful receipts and creates newly added matching 
   await store.routeOne();
   await store.deliverOne();
   await pool.query(
-    "INSERT INTO forms.\"ProcessorFlow\" (id, \"formKey\", enabled, action) VALUES ('second', 'lets-talk', true, 'sendgrid-email')",
+    "INSERT INTO forms.\"ProcessorFlow\" (id, \"formKey\", enabled, action) VALUES ('second', 'lets_talk', true, 'sendgrid-email')",
   );
   await pool.query('UPDATE forms."ProcessorEvent" SET "routedAt" = NULL');
   await store.routeOne();
   await store.deliverOne();
+  assert.equal(calls, 2);
+});
+
+test("environment settings replace only the configured flow and missing settings never fall back to DB", async () => {
+  const seen: unknown[] = [];
+  const configured = new Store(
+    pool,
+    new Map([
+      [
+        "sendgrid-email",
+        {
+          execute: async (_event, settings) => {
+            seen.push(settings);
+          },
+        },
+      ],
+    ]),
+    new Map([["lets-talk-sales-email", { recipients: [], templateId: "" }]]),
+  );
+  await pool.query(
+    'UPDATE forms."ProcessorFlow" SET enabled = true, settings = $1',
+    [JSON.stringify({ recipients: ["stale@example.com"] })],
+  );
+  await pool.query(
+    "INSERT INTO forms.\"ProcessorFlow\" (id, \"formKey\", enabled, action, settings) VALUES ('second', 'lets_talk', true, 'sendgrid-email', '{\"custom\":true}')",
+  );
+  await configured.enqueue(event);
+  await configured.routeOne();
+  await configured.deliverOne();
+  await configured.deliverOne();
+  assert.deepEqual(seen, [
+    { recipients: [], templateId: "" },
+    { custom: true },
+  ]);
+});
+
+test("form-key migration reroutes missed website events and preserves configuration and accepted receipts", async () => {
+  const second = {
+    ...event,
+    submissionId: "bf1d6716-26bf-4b66-aa23-9904f22d8b41",
+  };
+  await pool.query('UPDATE forms."ProcessorFlow" SET enabled = true');
+  await store.enqueue(event);
+  await store.routeOne();
+  await store.deliverOne();
+  await pool.query(
+    'UPDATE forms."ProcessorFlow" SET "formKey" = \'lets-talk\'',
+  );
+  await store.enqueue(second);
+  await store.routeOne();
+  const before = (
+    await pool.query(
+      'SELECT enabled, settings, rules FROM forms."ProcessorFlow"',
+    )
+  ).rows[0];
+  await pool.query(
+    await readFile(
+      new URL("../fixtures/lets-talk-key.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  const flow = (
+    await pool.query(
+      'SELECT "formKey", enabled, settings, rules FROM forms."ProcessorFlow"',
+    )
+  ).rows[0];
+  assert.deepEqual(flow, { ...before, formKey: "lets_talk" });
+  assert.equal(await store.routeOne(), true);
+  assert.equal(await store.routeOne(), false);
+  assert.equal(await store.deliverOne(), true);
+  assert.equal(await store.deliverOne(), false);
   assert.equal(calls, 2);
 });

@@ -1,7 +1,7 @@
 import type { Submission } from "../src/contracts.js";
 export const event: Submission = {
   submissionId: "25fa4e9d-b6bb-4013-983b-20d243a22ca2",
-  formKey: "lets-talk",
+  formKey: "lets_talk",
   version: 1,
   submittedAt: "2026-09-28T00:00:00.000Z",
   memberId: null,

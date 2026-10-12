@@ -1,0 +1,97 @@
+{
+  "topic": "external.action.email",
+  "originator": "forms-processor-v6",
+  "timestamp": "2026-10-13T00:00:00.000Z",
+  "mime-type": "application/json",
+  "key": "25fa4e9d-b6bb-4013-983b-20d243a22ca2",
+  "payload": {
+    "recipients": [
+      "sales@example.com",
+      "associate@example.com"
+    ],
+    "sendgrid_template_id": "d-00000000000000000000000000000000",
+    "version": "v3",
+    "data": {
+      "submissionId": "25fa4e9d-b6bb-4013-983b-20d243a22ca2",
+      "formKey": "lets_talk",
+      "version": 1,
+      "submittedAt": "2026-10-13T00:00:00.000Z",
+      "memberId": null,
+      "sourcePage": "/lets-talk",
+      "answers": {
+        "interested_in": "crowdsourcing",
+        "firstname": "Alex",
+        "lastname": "Example",
+        "email": "alex@example.com",
+        "company": "Example Company",
+        "briefly_describe_your_inquiry": "TEST submission — please confirm the production form email.",
+        "leadsource": "landing_page",
+        "source__c": "/lets-talk",
+        "lead_source_for_campaign__c": "NewTCLet'sTalk",
+        "primary_campaign__c": "NewTCLet'sTalk",
+        "insta_page_name__c": "New Topcoder.com - Let's chat form",
+        "utm_medium__c": "",
+        "utm_campaign__c": "",
+        "utm_source__c": ""
+      },
+      "fields": [
+        {
+          "key": "interested_in",
+          "value": "crowdsourcing"
+        },
+        {
+          "key": "firstname",
+          "value": "Alex"
+        },
+        {
+          "key": "lastname",
+          "value": "Example"
+        },
+        {
+          "key": "email",
+          "value": "alex@example.com"
+        },
+        {
+          "key": "company",
+          "value": "Example Company"
+        },
+        {
+          "key": "briefly_describe_your_inquiry",
+          "value": "TEST submission — please confirm the production form email."
+        },
+        {
+          "key": "leadsource",
+          "value": "landing_page"
+        },
+        {
+          "key": "source__c",
+          "value": "/lets-talk"
+        },
+        {
+          "key": "lead_source_for_campaign__c",
+          "value": "NewTCLet'sTalk"
+        },
+        {
+          "key": "primary_campaign__c",
+          "value": "NewTCLet'sTalk"
+        },
+        {
+          "key": "insta_page_name__c",
+          "value": "New Topcoder.com - Let's chat form"
+        },
+        {
+          "key": "utm_medium__c",
+          "value": ""
+        },
+        {
+          "key": "utm_campaign__c",
+          "value": ""
+        },
+        {
+          "key": "utm_source__c",
+          "value": ""
+        }
+      ]
+    }
+  }
+}

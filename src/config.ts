@@ -19,10 +19,27 @@ const schema = z.object({
   AUTH0_CLIENT_ID: z.string().optional(),
   AUTH0_CLIENT_SECRET: z.string().optional(),
   AUTH0_PROXY_SERVER_URL: z.string().optional(),
+  LETS_TALK_RECIPIENTS: z
+    .string()
+    .trim()
+    .default("")
+    .transform((value) =>
+      value ? value.split(",").map((email) => email.trim().toLowerCase()) : [],
+    )
+    .pipe(z.array(z.email()).max(1000))
+    .transform((emails) => [...new Set(emails)]),
+  LETS_TALK_SENDGRID_TEMPLATE_ID: z
+    .string()
+    .trim()
+    .regex(/^$|^d-[a-f0-9]{32}$/)
+    .default(""),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 });
 export type Config = z.infer<typeof schema> & { busApi?: BusConfig };
-/** Validate environment settings at startup; returns config or throws with names only, never values. */
+/** Validate startup environment (defaults to process.env), including comma-separated sales recipients.
+ * Returns normalized worker/Bus settings; missing email settings leave delivery deferred.
+ * Throws with invalid variable names only, never secret values; used by main before opening connections.
+ */
 export function config(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.safeParse(env);
   if (!parsed.success)
