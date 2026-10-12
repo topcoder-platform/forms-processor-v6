@@ -1,12 +1,15 @@
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
-import { SendGridEmail } from "./actions.js";
+import { BusEmail } from "./actions.js";
+import { BusApiClient } from "./bus.js";
 import { config } from "./config.js";
 import { consume } from "./consumer.js";
 import { Store, log } from "./store.js";
 
-/** Start the database inbox worker, Kafka consumer, and private health endpoint; propagate startup failures. */
+/** Start the database inbox worker, Kafka consumer, and private health endpoint with environment-owned sales settings.
+ * Takes no arguments and resolves after shutdown; startup/configuration/database failures propagate to the fatal handler.
+ */
 async function main(): Promise<void> {
   const settings = config();
   const pool = new Pool({
@@ -22,7 +25,18 @@ async function main(): Promise<void> {
     new Map([
       [
         "sendgrid-email",
-        new SendGridEmail(settings.SENDGRID_API_KEY, settings.SENDGRID_SANDBOX),
+        new BusEmail(
+          settings.busApi ? new BusApiClient(settings.busApi) : undefined,
+        ),
+      ],
+    ]),
+    new Map([
+      [
+        "lets-talk-sales-email",
+        {
+          recipients: settings.LETS_TALK_RECIPIENTS,
+          templateId: settings.LETS_TALK_SENDGRID_TEMPLATE_ID,
+        },
       ],
     ]),
   );

@@ -17,12 +17,20 @@ export function retrySeconds(attempts: number): number {
   return Math.min(3600, 5 * 2 ** Math.min(attempts, 10));
 }
 
-/** Owns the durable inbox, routing, and per-flow delivery receipts in the API-managed forms schema. */
+/** Owns the durable inbox, routing, and per-flow receipts in the API-managed forms schema.
+ * main supplies actions and optional environment-owned settings for specific flows.
+ */
 export class Store {
-  /** Accepts an existing PostgreSQL pool and action registry. Does not open connections or throw. */
+  /** Accepts a PostgreSQL pool, action registry, and optional settings replacements keyed by flow ID.
+   * Returns a store without opening connections or throwing. main uses replacements for SSM-owned sales settings.
+   */
   constructor(
     readonly pool: Pool,
     private readonly actions: ReadonlyMap<string, Action>,
+    private readonly settingsOverrides: ReadonlyMap<
+      string,
+      unknown
+    > = new Map(),
   ) {}
 
   /** Persist a validated submission before Kafka acknowledgement; duplicate IDs are no-ops. Throws on DB failure. */
@@ -108,8 +116,9 @@ export class Store {
   }
 
   /** Deliver one pending enabled flow under a row lock; records success or schedules a retry.
+   * Takes no input; environment settings replace DB settings only for explicitly configured flow IDs.
    * Returns whether work was found. Action failures are sanitized; DB failures propagate.
-   * A crash after provider acceptance but before commit can resend (at-least-once delivery).
+   * A crash after Bus API acceptance but before commit can resend (at-least-once delivery).
    */
   async deliverOne(): Promise<boolean> {
     return this.transaction(async (client) => {
@@ -125,7 +134,12 @@ export class Store {
       try {
         const action = this.actions.get(row.action);
         if (!action) throw new ActionError("unknown_action");
-        await action.execute(submissionSchema.parse(row.payload), row.settings);
+        await action.execute(
+          submissionSchema.parse(row.payload),
+          this.settingsOverrides.has(row.flowId)
+            ? this.settingsOverrides.get(row.flowId)
+            : row.settings,
+        );
       } catch (error) {
         const code =
           error instanceof ActionError ? error.message : "action_failed";

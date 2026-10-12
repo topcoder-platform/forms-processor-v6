@@ -33,13 +33,15 @@ Parameters:
   KafkaUrlParameter:
     Type: String
     Default: /config/common/global-appvar/KAFKA_URL
-  SendGridKeyParameter:
+  BusCredentialsPrefix:
     Type: String
-    Default: /config/email-service-v6/appvar/SENDGRID_API_KEY
+    Default: /config/forms-api-v6/appvar
+    Description: SSM prefix containing AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET for Bus API publishing.
   SecretsKmsKeyArn:
     Type: String
     Default: ""
 Conditions:
+  IsDev: !Equals [!Ref Environment, dev]
   KafkaTls: !Equals [!Ref KafkaPort, 9094]
   HasSecretsKmsKey: !Not [!Equals [!Ref SecretsKmsKeyArn, ""]]
 Resources:
@@ -72,7 +74,7 @@ Resources:
             FromPort: 443,
             ToPort: 443,
             CidrIp: 0.0.0.0/0,
-            Description: AWS and SendGrid via NAT,
+            Description: AWS Auth0 and Bus API via NAT,
           }
         - IpProtocol: tcp
           FromPort: 5432
@@ -144,7 +146,11 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${DatabaseUrlParameter}
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${KafkaUrlParameter}
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SendGridKeyParameter}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/AUTH0_CLIENT_ID
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/AUTH0_CLIENT_SECRET
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_URL
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_AUDIENCE
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_PROXY_SERVER_URL
               - !If
                 - HasSecretsKmsKey
                 - {
@@ -173,6 +179,15 @@ Resources:
           LinuxParameters: { InitProcessEnabled: true }
           Environment:
             - { Name: NODE_ENV, Value: production }
+            - {
+                Name: BUSAPI_URL,
+                Value:
+                  !If [
+                    IsDev,
+                    "https://api.topcoder-dev.com/v6",
+                    "https://api.topcoder.com/v6",
+                  ],
+              }
             - { Name: KAFKA_GROUP_ID, Value: forms-processor-v6 }
             - { Name: KAFKA_FROM_BEGINNING, Value: "true" }
             - {
@@ -182,7 +197,26 @@ Resources:
           Secrets:
             - { Name: DATABASE_URL, ValueFrom: !Ref DatabaseUrlParameter }
             - { Name: KAFKA_URL, ValueFrom: !Ref KafkaUrlParameter }
-            - { Name: SENDGRID_API_KEY, ValueFrom: !Ref SendGridKeyParameter }
+            - {
+                Name: AUTH0_CLIENT_ID,
+                ValueFrom: !Sub "${BusCredentialsPrefix}/AUTH0_CLIENT_ID",
+              }
+            - {
+                Name: AUTH0_CLIENT_SECRET,
+                ValueFrom: !Sub "${BusCredentialsPrefix}/AUTH0_CLIENT_SECRET",
+              }
+            - {
+                Name: AUTH0_URL,
+                ValueFrom: /config/common/global-appvar/AUTH0_URL,
+              }
+            - {
+                Name: AUTH0_AUDIENCE,
+                ValueFrom: /config/common/global-appvar/AUTH0_AUDIENCE,
+              }
+            - {
+                Name: AUTH0_PROXY_SERVER_URL,
+                ValueFrom: /config/common/global-appvar/AUTH0_PROXY_SERVER_URL,
+              }
           HealthCheck:
             Command:
               [
