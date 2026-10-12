@@ -100,8 +100,9 @@ test("failed delivery retries later and preserves successful per-flow receipts",
   assert.equal(rows[1].lastError, "bus_http_429");
   assert.equal(await store.deliverOne(), false);
   fail = false;
+  // Make the retry overdue; TIMESTAMPTZ(3) can round now() ahead of the next transaction.
   await pool.query(
-    'UPDATE forms."ProcessorDelivery" SET "nextAttemptAt" = now()',
+    'UPDATE forms."ProcessorDelivery" SET "nextAttemptAt" = now() - interval \'1 second\'',
   );
   await store.deliverOne();
   assert.equal(calls, 3);
@@ -138,7 +139,10 @@ test("invalid routing rules defer without dropping the inbox event", async () =>
   assert.equal(row.routedAt, null);
   assert.equal(row.lastError, "invalid_routing_configuration");
   await pool.query('UPDATE forms."ProcessorFlow" SET rules = \'{"all":[]}\'');
-  await pool.query('UPDATE forms."ProcessorEvent" SET "nextAttemptAt" = now()');
+  // Avoid the same timestamp rounding race when making a routing retry due.
+  await pool.query(
+    'UPDATE forms."ProcessorEvent" SET "nextAttemptAt" = now() - interval \'1 second\'',
+  );
   assert.equal(await store.routeOne(), true);
 });
 test("re-routing preserves successful receipts and creates newly added matching flow receipts", async () => {
