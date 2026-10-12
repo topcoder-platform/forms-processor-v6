@@ -3,12 +3,12 @@
 A small TypeScript Kafka worker for the HubSpot forms replacement. Consumes the
 `forms-api-v6` Bus API envelope on `form.submitted`, saves a durable inbox record,
 then routes each submission to independently retried actions. The first action
-publishes `lets-talk` email requests through Bus API to `external.action.email`;
+publishes `lets_talk` email requests through Bus API to `external.action.email`;
 `email-service-v6` delivers them using the configured SendGrid dynamic template.
 
 The initial `lets-talk-sales-email` flow is **disabled**. Recipients and template ID
-are TBD (empty/null in the seed). The optional sender is also unset; email-service-v6
-uses its configured default when no sender override is supplied. Matching submissions queue
+come from `LETS_TALK_RECIPIENTS` and `LETS_TALK_SENDGRID_TEMPLATE_ID`, injected
+from processor SSM SecureStrings. email-service-v6 uses its configured default sender. Matching submissions queue
 until you configure and enable the flow. No email is sent by a disabled flow.
 
 The form integration must include `"kafka": true` in the forms API submission
@@ -53,7 +53,8 @@ TEST_DATABASE_URL=postgresql://postgres:forms_local@localhost:5547/forms_process
 
 The integration suite replaces its `forms` schema. It never uses DATABASE_URL.
 `test/fixtures/processor-schema.sql` is a test-only copy of the API migration
-`20260928020000_processor_flows`; keep them identical when changing the schema.
+`20260928020000_processor_flows`; `test/fixtures/lets-talk-key.sql` copies the
+additive key correction. Keep each fixture identical to its API migration.
 
 ## Configure the first flow
 
@@ -61,40 +62,54 @@ The canonical Prisma models/migration live in **forms-api-v6**. Deploy migration
 `20260928020000_processor_flows` before deploying the worker; the worker fails
 startup if tables are missing. It does not run migrations or modify form schemas.
 
-Run a parameterized update using your database administration tooling:
+The website publishes the key `lets_talk`. Apply the follow-up migration
+`20261013010000_lets_talk_processor_key` to correct the original `lets-talk` seed;
+it preserves configuration and successful receipts, and reroutes retained events
+that missed this flow. Do not edit the already-applied original migration.
+
+Create these SecureStrings and redeploy the processor:
+
+- `/config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS`: comma-separated emails.
+  Whitespace is trimmed and case-insensitive duplicates are removed; empty entries
+  within a nonempty list are rejected. Up to 1000 addresses are supported.
+- `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID`: an active
+  SendGrid dynamic template ID (`d-` plus 32 lowercase hexadecimal characters).
+
+These settings replace database settings **only** for `lets-talk-sales-email`.
+Missing values defer delivery even when the database contains old valid settings.
+Malformed nonempty values fail startup. Parameter changes require redeployment;
+other flows still read their database settings on each attempt and may override
+`fromEmail`/`fromName`. This sales flow uses email-service-v6's default sender.
+
+After reviewing pending deliveries and verifying the deployed settings, enable:
 
 ```sql
-UPDATE forms."ProcessorFlow"
-SET settings = jsonb_build_object(
-      'recipients', jsonb_build_array('sales@example.com', 'associate@example.com'),
-      'templateId', 'd-00000000000000000000000000000000',
-      'fromEmail', 'verified-sender@example.com',
-      'fromName', 'Topcoder'
-    ), "updatedAt" = now()
-WHERE id = 'lets-talk-sales-email';
--- Replace all sample values before enabling:
 UPDATE forms."ProcessorFlow" SET enabled = true, "updatedAt" = now()
-WHERE id = 'lets-talk-sales-email';
+WHERE id = 'lets-talk-sales-email' AND "formKey" = 'lets_talk'
+  AND action = 'sendgrid-email';
 ```
 
-Use an active SendGrid dynamic template. A sender override must be verified; omit
-`fromEmail` or set it to null to use email-service-v6's configured sender. Changes are read
-for each delivery attempt; no restart is needed for recipients/template/sender.
 The full recipient list is visible in the email's To field. Recipients always
-come from trusted flow settings, never the submission. The template defines the
+come from trusted configuration, never the submission. The template defines the
 subject and content; use escaped Handlebars expressions for submitted answers.
 The published payload is `{ recipients, sendgrid_template_id, version: "v3", data,
 from? }` inside the standard Bus API envelope. `data` holds the template variables;
 `from` is emitted only when a sender override is configured. The existing stored
 action name `sendgrid-email` is retained for compatibility, but always uses Bus API.
-No migration or settings rewrite is needed for existing flows or pending receipts.
+The form-key correction is additive; successful pending-flow receipts are not replayed.
 
 Template data includes `submissionId`, `formKey`, `version`, `submittedAt`,
 `memberId`, `sourcePage`, `answers`, and `fields` (array of `{key,value}` strings).
 For lets-talk, use `{{answers.firstname}}`, `{{answers.lastname}}`,
 `{{answers.email}}`, `{{answers.company}}`, `{{answers.interested_in}}`, and
 `{{answers.briefly_describe_your_inquiry}}`. `{{#each fields}}` can render arbitrary
-forms. Submitted data is nested and cannot overwrite event metadata.
+forms. Submitted data is nested and cannot overwrite event metadata. The complete
+[example email envelope](examples/lets-talk-email.json) includes every field of the
+production form. Its `payload.data` becomes SendGrid `dynamic_template_data` directly:
+use `{{answers.firstname}}`, not `{{data.answers.firstname}}`. Select answers contain
+stable keys (`crowdsourcing`, `app_design_development`, `freelancers`), not display labels.
+The optional inquiry answer may be omitted when not supplied. Use escaped `{{...}}`
+for all submitted values; the template owns its subject and content.
 
 ## More forms and content-based flows
 
@@ -170,4 +185,5 @@ forms API database login, so a dedicated restricted login is an optional later s
 See [deploy/README.md](deploy/README.md). CircleCI checks every branch and deploys
 `develop` → dev, `master` → production using `org-global` credentials and the same
 pinned Topcoder AWS credential helper as forms-api-v6. Each environment needs its
-one-time CloudFormation bootstrap and API migration before its first deployment.
+existing ECS service/ECR repository, required SSM references and API migrations before deployment.
+The pipeline registers a new task revision and updates the existing service; it does not apply CloudFormation.

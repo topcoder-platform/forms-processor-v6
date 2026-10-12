@@ -1,15 +1,15 @@
--- Replace TBD recipients/template, verify Bus API M2M configuration, then execute as an authorized DB admin.
--- fromEmail is optional: use null for the email-service-v6 default, or a verified sender override.
--- Enabled remains false here deliberately. Enable with a separate UPDATE after configuration is complete.
+-- Run only after the API form-key migration, processor deployment, and SSM setup.
+-- Recipients/template come exclusively from these SecureStrings at task startup:
+-- /config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS
+-- /config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID
+-- Redeploy after setting them. The sender comes from email-service-v6's default.
+-- Review queued deliveries before enabling: they will also be sent.
 UPDATE forms."ProcessorFlow"
-SET settings = jsonb_build_object(
-      'recipients', jsonb_build_array('TBD'),
-      'templateId', 'TBD',
-      'fromEmail', NULL,
-      'fromName', 'Topcoder'
-    ),
-    "updatedAt" = now()
-WHERE id = 'lets-talk-sales-email';
+SET enabled = true, "updatedAt" = now()
+WHERE id = 'lets-talk-sales-email' AND "formKey" = 'lets_talk'
+  AND action = 'sendgrid-email'
+RETURNING id, "formKey", enabled;
 
--- UPDATE forms."ProcessorFlow" SET enabled = true, "updatedAt" = now()
+-- Pause pending sends when necessary (in-progress sends may complete):
+-- UPDATE forms."ProcessorFlow" SET enabled = false, "updatedAt" = now()
 -- WHERE id = 'lets-talk-sales-email';
