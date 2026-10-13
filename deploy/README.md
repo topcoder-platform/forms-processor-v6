@@ -16,8 +16,13 @@ failed rollout or timeout. It records current/previous task ARNs in a release ar
 
 ## Runtime parameter sources
 
-Values are injected by ECS at task startup; the release script reads only parameter
-metadata. The task execution role must have `ssm:GetParameters` access to the selected
+Values are injected by ECS at task startup. The release script resolves the 14
+allowlisted candidate names using two `GetParameters` requests (at most ten names
+per request), with `WithDecryption=false`. It uses only names and types, discarding
+returned values, and never scans parameter prefixes with `DescribeParameters`.
+The SSM client uses standard exponential-backoff retries, capped at ten total
+attempts per request, including for manual releases. No account-wide throughput
+setting change is required. The task execution role must have `ssm:GetParameters` access to the selected
 parameters and `kms:Decrypt` when a customer-managed key is used.
 
 | Settings | SSM source |
@@ -41,9 +46,27 @@ Malformed nonempty values fail startup without exposing values. Create both para
 before the email release. **Redeploy after every parameter change** so new tasks read
 new values and newly created parameters are included in the task definition.
 
-The CI role needs ECR push/read, ECS describe/list/register/update, SSM metadata reads,
-and permission to pass the existing task roles. No CloudFormation permissions are
+The CI role needs ECR push/read, ECS describe/list/register/update, `ssm:GetParameters`
+on the candidate names above (including API/shared fallback names), and permission
+to pass the existing task roles. It does not need `ssm:DescribeParameters` or KMS
+decryption for this lookup. No CloudFormation permissions are
 needed. Accounts are guarded explicitly: dev `811668436784`, production `409275337247`.
+
+## CircleCI alignment
+
+Like forms-api-v6, email-service-v6 and bus-api-v6, the worker uses the Python
+deployment executor, remote Docker with `buildx --load`, the pinned Topcoder
+credential helper, `org-global`, and branch-filtered, serialized dev/prod releases.
+Credentials are obtained immediately before deployment and the temporary helper
+and credentials file are removed on success or failure. AWS CLI/SDK calls use
+standard retry mode with ten total attempts.
+
+The worker retains `release.py` for task registration instead of the shared
+`master_deploy.sh` template generator: it preserves the live task's execution role,
+resources and sidecars, and imports only the named API/shared parameters above.
+It still follows the same ECR push, new task-definition revision, existing-service
+update and health-verification sequence. It neither loads whole API/global appvar
+paths nor requires a new `/deployvar` configuration for the fixed service target.
 
 ## Release and enable Let's Talk
 
