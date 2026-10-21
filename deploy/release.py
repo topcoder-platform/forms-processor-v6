@@ -37,8 +37,8 @@ def read_service(ecs):
 def secret_references(ssm):
     """Resolve named SSM references in batches of ten, without decrypting SecureStrings.
 
-    Takes an SSM client; returns name/valueFrom pairs. API Auth0 settings take
-    precedence over shared defaults. Kafka uses globals. Missing optional sales
+    Takes an SSM client; returns name/valueFrom pairs. Keycloak settings use the dedicated workload prefix with no Auth0/shared credential
+    fallback. Kafka uses globals. Missing optional sales
     settings permit a disabled-flow deployment. Raises for absent required values
     or sales/Bus parameters that are not SecureStrings; AWS errors propagate after
     client retries. GetParameters values are discarded; only names/types are used.
@@ -46,11 +46,12 @@ def secret_references(ssm):
     """
     prefixes = {'api': '/config/forms-api-v6/appvar',
                 'app': f'/config/{APP}/appvar',
+                'keycloak': f'/config/{APP}/keycloak-m2m',
                 'common': '/config/common/global-appvar'}
     sources = {'DATABASE_URL': ['api'], 'BUSAPI_URL': ['app'],
-               'AUTH0_CLIENT_ID': ['api'], 'AUTH0_CLIENT_SECRET': ['api'],
-               'AUTH0_URL': ['api', 'common'], 'AUTH0_AUDIENCE': ['api', 'common'],
-               'AUTH0_PROXY_SERVER_URL': ['api', 'common'],
+               'KEYCLOAK_CLIENT_ID': ['keycloak'], 'KEYCLOAK_CLIENT_SECRET': ['keycloak'],
+               'KEYCLOAK_ISSUER': ['keycloak'], 'KEYCLOAK_TOKEN_URL': ['keycloak'],
+               'KEYCLOAK_AUDIENCE': ['keycloak'], 'KEYCLOAK_SCOPE': ['keycloak'],
                'KAFKA_URL': ['common'], 'KAFKA_SSL_ENABLED': ['common'],
                'LETS_TALK_RECIPIENTS': ['app'], 'LETS_TALK_SENDGRID_TEMPLATE_ID': ['app']}
     names = [prefixes[source] + '/' + name
@@ -59,7 +60,7 @@ def secret_references(ssm):
     for start in range(0, len(names), 10):
         response = ssm.get_parameters(Names=names[start:start + 10], WithDecryption=False)
         available.update({p['Name']: p['Type'] for p in response['Parameters']})
-    optional = {'AUTH0_PROXY_SERVER_URL', 'KAFKA_SSL_ENABLED',
+    optional = {'KEYCLOAK_SCOPE', 'KAFKA_SSL_ENABLED',
                 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'}
     references = []
     for name, candidates in sources.items():
@@ -69,7 +70,7 @@ def secret_references(ssm):
             if name not in optional:
                 raise RuntimeError('Missing required SSM parameter: ' + name)
             continue
-        if name in ('BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'):
+        if name in ('BUSAPI_URL', 'KEYCLOAK_CLIENT_SECRET', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'):
             if available[path] != 'SecureString':
                 raise RuntimeError('SecureString required: ' + path)
         references.append({'name': name, 'valueFrom': path})
@@ -77,7 +78,7 @@ def secret_references(ssm):
 
 
 def task_request(ecs, current, image, references):
-    """Clone the live task's registerable fields and replace the processor image/managed secrets.
+    """Clone the live task fields, select Keycloak, remove legacy credentials and replace image/secrets.
 
     Inputs are the ECS client, described task, ECR image URI and SSM references.
     Returns a register-task-definition request, preserving roles/resources/sidecars.
@@ -91,12 +92,15 @@ def task_request(ecs, current, image, references):
     if len(containers) != 1:
         raise RuntimeError('Expected one forms-processor-v6 container')
     container = containers[0]
-    managed = {'DATABASE_URL', 'BUSAPI_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET',
+    managed = {'M2M_PROVIDER', 'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_CLIENT_SECRET',
+               'KEYCLOAK_ISSUER', 'KEYCLOAK_TOKEN_URL', 'KEYCLOAK_AUDIENCE', 'KEYCLOAK_SCOPE',
+               'DATABASE_URL', 'BUSAPI_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET',
                'AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL',
                'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'}
     # Preserve an existing TLS setting if the global store does not define it.
     managed.update(ref['name'] for ref in references)
     container['environment'] = [e for e in container.get('environment', []) if e['name'] not in managed]
+    container['environment'].append({'name': 'M2M_PROVIDER', 'value': 'keycloak'})
     container['secrets'] = [s for s in container.get('secrets', []) if s['name'] not in managed] + references
     container['image'] = image
     container['healthCheck'] = {

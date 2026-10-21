@@ -1,3 +1,5 @@
+> Isolated `keycloak_m2M` branch. Do not deploy until workload-specific Keycloak settings and Bus API validation are ready; existing DEV services remain unchanged.
+
 # forms-processor-v6
 
 A small TypeScript Kafka worker for the HubSpot forms replacement. Consumes the
@@ -32,15 +34,18 @@ npm run dev
 committed offset. `KAFKA_SSL_ENABLED` enables broker TLS. The dev MSK cluster uses
 9092; TLS deployments use 9094. SASL/IAM Kafka authentication is not implemented.
 Production database connections should verify TLS; the image includes the RDS CA.
-Email publishing requires `BUSAPI_URL` (the API base ending in `/v6`), `AUTH0_URL`,
-`AUTH0_AUDIENCE`, `AUTH0_CLIENT_ID`, and `AUTH0_CLIENT_SECRET`. Optionally set
-`AUTH0_PROXY_SERVER_URL` for the shared token proxy. These settings are all-or-none;
-a disabled flow can run without any of them. The M2M identity needs `write:bus_api`.
-The client uses the same client-credentials and `auth0_url` proxy contract as
-`tc-core-library-js`, caches tokens until 60 seconds before `expires_in`, and shares
-an abortable 15-second deadline across authentication and Bus API publication.
-Native fetch keeps this worker's database lock bounded; the shared Bus API wrapper
-currently does not provide a request deadline. PORT defaults to 3000 (private health).
+Email publishing requires `BUSAPI_URL` (base ending in `/v6`), `M2M_PROVIDER=keycloak`,
+`KEYCLOAK_ISSUER`, `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_CLIENT_ID`,
+and `KEYCLOAK_CLIENT_SECRET`. Optional `KEYCLOAK_SCOPE` narrows approved defaults.
+These settings are all-or-none; a disabled flow can run without them. The workload
+needs `write:bus_api`. Shared core owns issuance, signature/issuer/audience/lifetime
+validation, and caching. No Auth0 proxy/credential fallback remains.
+
+Token acquisition and Bus publication share a 15-second caller deadline. The core
+provider has bounded issuance/JWKS requests; if the caller deadline expires, the
+worker stops waiting and never publishes that late result. Native fetch uses the
+remaining deadline for Bus publication, bounding the database lock duration.
+A Bus 401 clears the core cache. PORT defaults to 3000 (private health).
 There are no direct SendGrid credentials or sandbox settings in this processor.
 
 Quality checks: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
@@ -187,3 +192,5 @@ See [deploy/README.md](deploy/README.md). CircleCI checks every branch and deplo
 pinned Topcoder AWS credential helper as forms-api-v6. Each environment needs its
 existing ECS service/ECR repository, required SSM references and API migrations before deployment.
 The pipeline registers a new task revision and updates the existing service; it does not apply CloudFormation.
+
+Keycloak branch validation: lint/build/typecheck, all 31 unit tests, all eight PostgreSQL integration tests, ten offline deployment tests, and CloudFormation lint pass. The compiled provider issued/validated/cached a real DEV token with a stubbed Bus transport; no event was published. Existing deployment evidence files are historical.

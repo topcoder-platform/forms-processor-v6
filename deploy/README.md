@@ -1,3 +1,5 @@
+> Keycloak migration branch only: do not run release.py or deploy this template before rollout approval. Existing verification/status JSON files describe historical Auth0 deployments. No service is deployed by these source changes.
+
 # Deployment to existing ECS services
 
 CircleCI checks all branches. After quality and deployment tests pass, `develop`
@@ -30,8 +32,8 @@ parameters and `kms:Decrypt` when a customer-managed key is used.
 | `BUSAPI_URL` | `/config/forms-processor-v6/appvar/BUSAPI_URL` (required SecureString; prod `https://api.topcoder.com/v6`, dev `https://api.topcoder-dev.com/v6`) |
 | `LETS_TALK_RECIPIENTS` | `/config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS` (SecureString; comma-separated addresses) |
 | `LETS_TALK_SENDGRID_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID` (SecureString; active `d-` dynamic-template ID) |
-| `DATABASE_URL`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | `/config/forms-api-v6/appvar/` |
-| `AUTH0_URL`, `AUTH0_AUDIENCE`, optional `AUTH0_PROXY_SERVER_URL` | Forms API appvars when present, otherwise `/config/common/global-appvar/` |
+| `DATABASE_URL` | `/config/forms-api-v6/appvar/` |
+| `KEYCLOAK_ISSUER`, `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, optional `KEYCLOAK_SCOPE` | `/config/forms-processor-v6/keycloak-m2m/`; no fallback to Forms API or Auth0 credentials |
 | `KAFKA_URL`, optional `KAFKA_SSL_ENABLED` | `/config/common/global-appvar/` |
 
 Only these named references are imported. The processor does not receive the API's
@@ -114,3 +116,7 @@ must preserve the live task reference and desired count: applying an old stack i
 or the old `release.py` procedure can revert a newer ECS release. The dev execution
 role from that bootstrap needs access to the new processor SSM paths before its first
 new release. Provision infrastructure separately if the production service is missing.
+
+The release builder sets `M2M_PROVIDER=keycloak`, removes stale Auth0 runtime settings, and requires a SecureString client secret. Provision the dedicated workload parameters and `write:bus_api` grant before rollout. No shared Auth0 parameter is modified.
+
+An existing ECS execution role must be allowed to read the dedicated Keycloak SSM prefix (and decrypt its KMS key). `release.py` preserves role assignments; the branch template includes the required parameter paths. Prepare those permissions before releasing the branch.

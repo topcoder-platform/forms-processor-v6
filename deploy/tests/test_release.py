@@ -21,9 +21,10 @@ class ReleaseTests(unittest.TestCase):
     def setUp(self):
         """Build named-parameter fixtures for each test; takes no arguments and returns nothing."""
         entries = {
-            '/config/forms-api-v6/appvar': ['DATABASE_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'AUTH0_URL'],
+            '/config/forms-api-v6/appvar': ['DATABASE_URL'],
+            '/config/forms-processor-v6/keycloak-m2m': ['KEYCLOAK_ISSUER', 'KEYCLOAK_TOKEN_URL', 'KEYCLOAK_AUDIENCE', 'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_CLIENT_SECRET', 'KEYCLOAK_SCOPE'],
             '/config/forms-processor-v6/appvar': ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'],
-            '/config/common/global-appvar': ['AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL', 'KAFKA_SSL_ENABLED'],
+            '/config/common/global-appvar': ['KAFKA_URL', 'KAFKA_SSL_ENABLED'],
         }
         self.parameters = {
             path + '/' + name: {'Name': path + '/' + name, 'Type': 'SecureString', 'Value': 'unused-ciphertext'}
@@ -55,31 +56,33 @@ class ReleaseTests(unittest.TestCase):
     def test_secret_sources_and_types(self):
         """Two bounded non-decrypting reads return only named references with the intended precedence."""
         refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
-        self.assertEqual(refs['AUTH0_URL'], '/config/forms-api-v6/appvar/AUTH0_URL')
-        self.assertEqual(refs['AUTH0_AUDIENCE'], '/config/common/global-appvar/AUTH0_AUDIENCE')
+        self.assertEqual(refs['KEYCLOAK_TOKEN_URL'], '/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_TOKEN_URL')
+        self.assertEqual(refs['KEYCLOAK_AUDIENCE'], '/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_AUDIENCE')
         self.assertEqual(refs['DATABASE_URL'], '/config/forms-api-v6/appvar/DATABASE_URL')
         self.assertEqual(refs['KAFKA_URL'], '/config/common/global-appvar/KAFKA_URL')
         self.assertEqual(refs['BUSAPI_URL'], '/config/forms-processor-v6/appvar/BUSAPI_URL')
-        self.assertEqual(len(refs), 11)
+        self.assertEqual(len(refs), 12)
         self.assertNotIn('unused-ciphertext', json.dumps(refs))
         self.assertEqual(self.ssm.get_parameters.call_count, 2)
         requested = [name for call in self.ssm.get_parameters.call_args_list for name in call.kwargs['Names']]
-        self.assertEqual(len(requested), 14)
-        self.assertEqual(len(set(requested)), 14)
+        self.assertEqual(len(requested), 12)
+        self.assertEqual(len(set(requested)), 12)
         self.assertNotIn('/config/forms-api-v6/appvar/MIGRATION_DATABASE_URL', requested)
         self.ssm.get_paginator.assert_not_called()
         self.ssm.describe_parameters.assert_not_called()
 
-    def test_optional_parameters_and_auth_fallback(self):
-        """Missing optional settings are omitted and absent API Auth0 settings use shared defaults."""
-        del self.parameters['/config/forms-api-v6/appvar/AUTH0_URL']
+    def test_optional_parameters_and_no_auth_fallback(self):
+        """Optional sales/scope settings may be absent; required Keycloak settings never fall back to Auth0."""
         for name in ['LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID']:
             del self.parameters['/config/forms-processor-v6/appvar/' + name]
-        for name in ['KAFKA_SSL_ENABLED', 'AUTH0_PROXY_SERVER_URL']:
-            del self.parameters['/config/common/global-appvar/' + name]
-        refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
-        self.assertEqual(refs['AUTH0_URL'], '/config/common/global-appvar/AUTH0_URL')
-        self.assertEqual(len(refs), 7)
+        del self.parameters['/config/common/global-appvar/KAFKA_SSL_ENABLED']
+        del self.parameters['/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_SCOPE']
+        refs = release.secret_references(self.ssm)
+        self.assertEqual(len(refs), 8)
+        del self.parameters['/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_TOKEN_URL']
+        self.parameters['/config/common/global-appvar/AUTH0_URL'] = {'Name': '/config/common/global-appvar/AUTH0_URL', 'Type': 'SecureString'}
+        with self.assertRaisesRegex(RuntimeError, 'KEYCLOAK_TOKEN_URL'):
+            release.secret_references(self.ssm)
 
     def test_required_parameter_missing_fails(self):
         """A missing required database reference raises instead of publishing a broken task."""
@@ -146,7 +149,7 @@ class ReleaseTests(unittest.TestCase):
                 with patch.object(ssm._endpoint.http_session, 'send', side_effect=respond), \
                         patch('botocore.endpoint.time.sleep'):
                     if throttle_count == 5:
-                        self.assertEqual(len(release.secret_references(ssm)), 11)
+                        self.assertEqual(len(release.secret_references(ssm)), 12)
                     else:
                         with self.assertRaises(ClientError):
                             release.secret_references(ssm)
@@ -171,7 +174,7 @@ class ReleaseTests(unittest.TestCase):
         for key in ['executionRoleArn', 'taskRoleArn', 'cpu', 'memory', 'networkMode', 'requiresCompatibilities']:
             self.assertEqual(result[key], current[key])
         container = result['containerDefinitions'][0]
-        self.assertEqual(container['environment'], [{'name': 'KAFKA_SSL_ENABLED', 'value': 'true'}])
+        self.assertEqual(container['environment'], [{'name': 'KAFKA_SSL_ENABLED', 'value': 'true'}, {'name': 'M2M_PROVIDER', 'value': 'keycloak'}])
         self.assertEqual(container['secrets'], [{'name': 'OTHER', 'valueFrom': '/other'}] + refs)
         self.assertEqual(container['image'], 'new')
         self.assertEqual(current['containerDefinitions'][0]['image'], 'old')

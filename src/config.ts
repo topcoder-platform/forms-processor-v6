@@ -14,11 +14,13 @@ const schema = z.object({
   KAFKA_SSL_ENABLED: boolean.default(false),
   KAFKA_FROM_BEGINNING: boolean.default(true),
   BUSAPI_URL: z.string().optional(),
-  AUTH0_URL: z.string().optional(),
-  AUTH0_AUDIENCE: z.string().optional(),
-  AUTH0_CLIENT_ID: z.string().optional(),
-  AUTH0_CLIENT_SECRET: z.string().optional(),
-  AUTH0_PROXY_SERVER_URL: z.string().optional(),
+  M2M_PROVIDER: z.literal("keycloak").optional(),
+  KEYCLOAK_ISSUER: z.string().optional(),
+  KEYCLOAK_TOKEN_URL: z.string().optional(),
+  KEYCLOAK_AUDIENCE: z.string().optional(),
+  KEYCLOAK_CLIENT_ID: z.string().optional(),
+  KEYCLOAK_CLIENT_SECRET: z.string().optional(),
+  KEYCLOAK_SCOPE: z.string().optional(),
   LETS_TALK_RECIPIENTS: z
     .string()
     .trim()
@@ -36,7 +38,7 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 });
 export type Config = z.infer<typeof schema> & { busApi?: BusConfig };
-/** Validate startup environment (defaults to process.env), including comma-separated sales recipients.
+/** Validate startup environment (defaults to process.env), including all-or-none Keycloak Bus credentials and comma-separated sales recipients.
  * Returns normalized worker/Bus settings; missing email settings leave delivery deferred.
  * Throws with invalid variable names only, never secret values; used by main before opening connections.
  */
@@ -49,16 +51,14 @@ export function config(env: NodeJS.ProcessEnv = process.env): Config {
   const data = parsed.data;
   const keys = [
     "BUSAPI_URL",
-    "AUTH0_URL",
-    "AUTH0_AUDIENCE",
-    "AUTH0_CLIENT_ID",
-    "AUTH0_CLIENT_SECRET",
+    "M2M_PROVIDER",
+    "KEYCLOAK_ISSUER",
+    "KEYCLOAK_TOKEN_URL",
+    "KEYCLOAK_AUDIENCE",
+    "KEYCLOAK_CLIENT_ID",
+    "KEYCLOAK_CLIENT_SECRET",
   ] as const;
-  if (
-    !keys.some((key) => data[key]?.trim()) &&
-    !data.AUTH0_PROXY_SERVER_URL?.trim()
-  )
-    return data;
+  if (!keys.some((key) => data[key]?.trim()) && !data.KEYCLOAK_SCOPE?.trim()) return data;
   const missing = keys.filter((key) => !data[key]?.trim());
   if (missing.length)
     throw new Error(`Invalid configuration: ${missing.join(", ")}`);
@@ -66,24 +66,21 @@ export function config(env: NodeJS.ProcessEnv = process.env): Config {
     keys.map((key) => [key, data[key]!.trim()]),
   ) as unknown as BusConfig;
   busApi.BUSAPI_URL = endpoint(busApi.BUSAPI_URL, "BUSAPI_URL", true);
-  busApi.AUTH0_URL = endpoint(busApi.AUTH0_URL, "AUTH0_URL");
-  if (data.AUTH0_PROXY_SERVER_URL?.trim())
-    busApi.AUTH0_PROXY_SERVER_URL = endpoint(
-      data.AUTH0_PROXY_SERVER_URL.trim(),
-      "AUTH0_PROXY_SERVER_URL",
-    );
+  busApi.KEYCLOAK_ISSUER = endpoint(busApi.KEYCLOAK_ISSUER, "KEYCLOAK_ISSUER");
+  busApi.KEYCLOAK_TOKEN_URL = endpoint(busApi.KEYCLOAK_TOKEN_URL, "KEYCLOAK_TOKEN_URL");
+  if (data.KEYCLOAK_SCOPE?.trim()) busApi.KEYCLOAK_SCOPE = data.KEYCLOAK_SCOPE.trim();
   return { ...data, busApi };
 }
 
 /** Validate an HTTP(S) endpoint without credentials/query fragments; returns normalized URL or a safe error.
- * Bus API requires the /v6 base because the client appends /bus/events.
+ * Bus API requires the /v6 base; Keycloak endpoints require HTTPS.
  */
 function endpoint(value: string, key: string, bus = false): string {
   try {
     const url = new URL(value);
     url.pathname = url.pathname.replace(/\/+$/, "");
     if (
-      !["http:", "https:"].includes(url.protocol) ||
+      !(bus ? ["http:", "https:"].includes(url.protocol) : url.protocol === "https:") ||
       url.username ||
       url.password ||
       url.search ||

@@ -35,8 +35,8 @@ Parameters:
     Default: /config/common/global-appvar/KAFKA_URL
   BusCredentialsPrefix:
     Type: String
-    Default: /config/forms-api-v6/appvar
-    Description: SSM prefix containing AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET for Bus API publishing.
+    Default: /config/forms-processor-v6/keycloak-m2m
+    Description: Dedicated workload SSM prefix containing Keycloak issuer, endpoint, audience and credentials.
   SecretsKmsKeyArn:
     Type: String
     Default: ""
@@ -74,7 +74,7 @@ Resources:
             FromPort: 443,
             ToPort: 443,
             CidrIp: 0.0.0.0/0,
-            Description: AWS Auth0 and Bus API via NAT,
+            Description: AWS Keycloak and Bus API via NAT,
           }
         - IpProtocol: tcp
           FromPort: 5432
@@ -146,11 +146,11 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${DatabaseUrlParameter}
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${KafkaUrlParameter}
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/AUTH0_CLIENT_ID
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/AUTH0_CLIENT_SECRET
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_URL
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_AUDIENCE
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_PROXY_SERVER_URL
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_CLIENT_ID
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_CLIENT_SECRET
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_TOKEN_URL
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_AUDIENCE
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_ISSUER
               - !If
                 - HasSecretsKmsKey
                 - {
@@ -179,6 +179,7 @@ Resources:
           LinuxParameters: { InitProcessEnabled: true }
           Environment:
             - { Name: NODE_ENV, Value: production }
+            - { Name: M2M_PROVIDER, Value: keycloak }
             - {
                 Name: BUSAPI_URL,
                 Value:
@@ -198,24 +199,24 @@ Resources:
             - { Name: DATABASE_URL, ValueFrom: !Ref DatabaseUrlParameter }
             - { Name: KAFKA_URL, ValueFrom: !Ref KafkaUrlParameter }
             - {
-                Name: AUTH0_CLIENT_ID,
-                ValueFrom: !Sub "${BusCredentialsPrefix}/AUTH0_CLIENT_ID",
+                Name: KEYCLOAK_CLIENT_ID,
+                ValueFrom: !Sub "${BusCredentialsPrefix}/KEYCLOAK_CLIENT_ID",
               }
             - {
-                Name: AUTH0_CLIENT_SECRET,
-                ValueFrom: !Sub "${BusCredentialsPrefix}/AUTH0_CLIENT_SECRET",
+                Name: KEYCLOAK_CLIENT_SECRET,
+                ValueFrom: !Sub "${BusCredentialsPrefix}/KEYCLOAK_CLIENT_SECRET",
               }
             - {
-                Name: AUTH0_URL,
-                ValueFrom: /config/common/global-appvar/AUTH0_URL,
+                Name: KEYCLOAK_TOKEN_URL,
+                ValueFrom: !Sub "${BusCredentialsPrefix}/KEYCLOAK_TOKEN_URL",
               }
             - {
-                Name: AUTH0_AUDIENCE,
-                ValueFrom: /config/common/global-appvar/AUTH0_AUDIENCE,
+                Name: KEYCLOAK_AUDIENCE,
+                ValueFrom: !Sub "${BusCredentialsPrefix}/KEYCLOAK_AUDIENCE",
               }
             - {
-                Name: AUTH0_PROXY_SERVER_URL,
-                ValueFrom: /config/common/global-appvar/AUTH0_PROXY_SERVER_URL,
+                Name: KEYCLOAK_ISSUER,
+                ValueFrom: !Sub "${BusCredentialsPrefix}/KEYCLOAK_ISSUER",
               }
           HealthCheck:
             Command:
