@@ -6,6 +6,12 @@ then routes each submission to independently retried actions. The first action
 publishes `lets_talk` email requests through Bus API to `external.action.email`;
 `email-service-v6` delivers them using the configured SendGrid dynamic template.
 
+Let's talk submissions can also be **classified by the tc-ai-api
+`lets-talk-classification` workflow**, and the label then decides what is sent (a
+reply to the submitter, a support forward, or nothing). See
+[AI classification and label actions](#ai-classification-and-label-actions) and
+[ADR 0001](docs/adr/0001-lets-talk-ai-classification-and-label-actions.md).
+
 The initial `lets-talk-sales-email` flow is **disabled**. Recipients and template ID
 come from `LETS_TALK_RECIPIENTS` and `LETS_TALK_SENDGRID_TEMPLATE_ID`, injected
 from processor SSM SecureStrings. email-service-v6 uses its configured default sender. Matching submissions queue
@@ -89,8 +95,9 @@ WHERE id = 'lets-talk-sales-email' AND "formKey" = 'lets_talk'
   AND action = 'sendgrid-email';
 ```
 
-The full recipient list is visible in the email's To field. Recipients always
-come from trusted configuration, never the submission. The template defines the
+The full recipient list is visible in the email's To field. Recipients come from
+trusted configuration, except for the Let's talk reply flows, which email the
+submitter under the safeguards described below. The template defines the
 subject and content; use escaped Handlebars expressions for submitted answers.
 The published payload is `{ recipients, sendgrid_template_id, version: "v3", data,
 from? }` inside the standard Bus API envelope. `data` holds the template variables;
@@ -111,6 +118,61 @@ stable keys (`crowdsourcing`, `app_design_development`, `freelancers`), not disp
 The optional inquiry answer may be omitted when not supplied. Use escaped `{{...}}`
 for all submitted values; the template owns its subject and content.
 
+## AI classification and label actions
+
+The flows below are seeded **disabled** by forms-api-v6 migration
+`20261022010000_lets_talk_classification`. Their settings come from processor SSM
+SecureStrings (`src/lets-talk-flows.ts`), not from the database.
+
+| Flow | Runs for | Does |
+| --- | --- | --- |
+| `lets-talk-classify` (`ai-classify`) | every `lets_talk` submission | Calls `POST {AI_API_URL}/workflows/lets-talk-classification/start-async` and saves the label in `forms."SubmissionClassification"` |
+| `lets-talk-community-opportunity-reply` | `COMMUNITY_OPPORTUNITY` | Reply to the submitter (`LETS_TALK_OPPORTUNITY_TEMPLATE_ID`) |
+| `lets-talk-community-skills-reply` | `COMMUNITY_SKILLS` | Reply to the submitter (`LETS_TALK_SKILLS_TEMPLATE_ID`) |
+| `lets-talk-community-general-reply` | `COMMUNITY_GENERAL` | Reply to the submitter (`LETS_TALK_GENERAL_TEMPLATE_ID`) |
+| `lets-talk-wipro-queries-reply` | `WIPRO_QUERIES` | Reply to the submitter (`LETS_TALK_WIPRO_TEMPLATE_ID`) |
+| `lets-talk-sales-reply` | `SALES_LEAD` | Reply to the submitter (`LETS_TALK_SALES_REPLY_TEMPLATE_ID`); the first `LETS_TALK_SALES_REPLY_TO` address is reply-to, the others are copied |
+| `lets-talk-support-forward` | `COMMUNITY_SUPPORT` | Full submission to `LETS_TALK_SUPPORT_RECIPIENTS`, reply-to the submitter (`LETS_TALK_SUPPORT_TEMPLATE_ID`) |
+| `lets-talk-sales-email` (existing) | after cut-over: `UNKNOWN` only | The original internal email, now the fallback when classification fails |
+
+`JUNK` has no flow, so nothing is sent. The templates and their SendGrid setup are
+in [docs/emails/](docs/emails/README.md).
+
+**Two-stage routing.** A flow whose rules carry a `classification` list waits for the
+label: `{"all":[],"classification":["SALES_LEAD"]}`. Routing on arrival skips it. When
+the classify delivery succeeds, one transaction saves the classification, creates
+deliveries for the **enabled** flows listing that label (and matching their answer
+predicates), and completes the classify delivery. Disabled label flows get no queued
+delivery, so a reply is never sent weeks after the submission.
+
+**Classification.** The AI call has a 30-second deadline. On a timeout the run id is
+saved, and the next attempt reads that run (`GET …/runs/:runId`) instead of paying
+for a new one. Invalid input fails at once. Failed runs retry with a new run up to
+`LETS_TALK_CLASSIFY_MAX_ATTEMPTS` (5). HTTP, network and configuration failures, and
+runs that never finish, retry until `LETS_TALK_CLASSIFY_MAX_AGE_MINUTES` (30) after
+receipt. Every give-up records `FAILED` with label `UNKNOWN`, which routes the legacy
+email. The processor's M2M client (the Bus API identity) needs the tc-ai-api scope
+`ai:letstalk:classify`; set `AI_AUTH0_AUDIENCE` if tc-ai-api expects a different
+token audience.
+
+**Safeguards for emails to the submitter** (an address typed into a public form):
+
+* Template data is built in code and is only `firstName` (trimmed, at most 40
+  characters, dropped if it looks like a URL, address or markup) and `interestArea`
+  (the option's display label). The message, company and other answers never
+  reach a reply, whatever the template contains.
+* At most `LETS_TALK_REPLY_CAP_PER_DAY` (1) reply per address per 24 hours across the
+  reply flows. A capped or address-less reply completes as `skipped_reply_cap` /
+  `skipped_no_recipient_address` without sending.
+* `JUNK` and `UNKNOWN` never reply.
+
+**Rollout.** Run [examples/lets-talk-shadow-mode.sql](examples/lets-talk-shadow-mode.sql)
+first: submissions are classified and labelled in the reports UI while the legacy
+email still goes out for everything. After the labels have been reviewed and the
+templates set up, [examples/lets-talk-cutover.sql](examples/lets-talk-cutover.sql)
+enables the label flows and limits the legacy email to `UNKNOWN`. Both files include
+monitoring and rollback queries.
+
 ## More forms and content-based flows
 
 `forms."ProcessorFlow"` stores a stable ID, form key, enabled flag, action name,
@@ -124,11 +186,13 @@ Rules are AND predicates on stable answer keys, with strict typed comparisons:
 
 Supported operators: `equals` (string/number/boolean), `in` (one of scalar values),
 `contains` (multi-select array includes a string), and `exists` (including false/0).
+An optional `classification` list of labels makes the flow wait for classification
+(see above).
 `{"all":[]}` matches all answers. The seeded flow matches every lets-talk
 submission, as requested for the first implementation. Changing the rules can
 restrict it to sales interests when additional member options exist.
 
-Implement `Action.execute(event, settings)` in `src/actions.ts` or another module
+Implement `Action.execute(event, settings, context)` in `src/actions.ts` or another module
 and register it in `src/main.ts` for a new action type. Rule validation lives in
 `src/contracts.ts`; database queue/receipts live in `src/store.ts`. The Kafka layer
 only validates and persists events. No browser redirects occur in this async worker;
@@ -139,12 +203,15 @@ a future member signup redirect belongs in the website's form response flow.
 * Kafka commits only after PostgreSQL persists the event. Duplicate submission IDs
   do not create another inbox record. Invalid envelopes are discarded with a log
   of topic/partition/offset, without logging personal data. There is no raw-message DLQ.
-* Routing creates a unique delivery per submission/flow, including disabled flows.
+* Routing creates a unique delivery per submission/flow, including disabled flows
+  (stage-2 label flows excepted, see above).
   Unmatched events are retained with no delivery. Rules are evaluated once at routing;
   configuration edits do not retroactively change existing routing decisions.
 * Workers use `FOR UPDATE SKIP LOCKED` to allow multiple ECS tasks safely. Each
   delivery holds its row lock through the bounded 15-second authentication/Bus API request.
-* Failed actions retry indefinitely, starting at 5 seconds and capped at one hour.
+* Failed actions retry indefinitely, starting at 5 seconds and capped at one hour,
+  except classification, which gives up as described above. Deliberate no-ops
+  complete with `lastError = skipped_<code>`.
   This includes missing settings, unknown actions, 4xx, rate limits, and timeouts.
   Fix configuration or disable the flow; other deliveries continue. Monitor
   `lastError`, attempts, oldest pending records, and CloudWatch deferred/fatal logs.
@@ -176,8 +243,9 @@ WHERE "submissionId" = '00000000-0000-0000-0000-000000000000';
 The inbox duplicates personal data from the API event. Include it in retention
 and erasure procedures. Deleting an inbox row cascades its receipts and removes
 deduplication protection; retain records through your Kafka retention/replay window.
-There is no automatic deletion policy. The service needs only SELECT on flows,
-SELECT/INSERT/UPDATE on inbox/deliveries; the initial deployment reuses the existing
+There is no automatic deletion policy. Classification rows are deleted with their
+submission in forms-api-v6. The service needs only SELECT on flows,
+SELECT/INSERT/UPDATE on inbox/deliveries/`SubmissionClassification`; the initial deployment reuses the existing
 forms API database login, so a dedicated restricted login is an optional later step.
 
 ## Deployment

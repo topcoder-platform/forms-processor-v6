@@ -30,6 +30,9 @@ parameters and `kms:Decrypt` when a customer-managed key is used.
 | `BUSAPI_URL` | `/config/forms-processor-v6/appvar/BUSAPI_URL` (required SecureString; prod `https://api.topcoder.com/v6`, dev `https://api.topcoder-dev.com/v6`) |
 | `LETS_TALK_RECIPIENTS` | `/config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS` (SecureString; comma-separated addresses) |
 | `LETS_TALK_SENDGRID_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID` (SecureString; active `d-` dynamic-template ID) |
+| `AI_API_URL`, `AI_AUTH0_AUDIENCE` | `/config/forms-processor-v6/appvar/` (optional SecureStrings; tc-ai-api base ending in `/v6/ai`, e.g. `https://api.topcoder.com/v6/ai`; the audience defaults to `AUTH0_AUDIENCE`) |
+| `LETS_TALK_OPPORTUNITY_TEMPLATE_ID`, `LETS_TALK_SKILLS_TEMPLATE_ID`, `LETS_TALK_GENERAL_TEMPLATE_ID`, `LETS_TALK_WIPRO_TEMPLATE_ID`, `LETS_TALK_SALES_REPLY_TEMPLATE_ID`, `LETS_TALK_SUPPORT_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/` (optional SecureStrings; one SendGrid template per label flow, see `docs/emails/README.md`) |
+| `LETS_TALK_SUPPORT_RECIPIENTS`, `LETS_TALK_SALES_REPLY_TO`, `LETS_TALK_REPLY_CAP_PER_DAY`, `LETS_TALK_CLASSIFY_MAX_ATTEMPTS`, `LETS_TALK_CLASSIFY_MAX_AGE_MINUTES` | `/config/forms-processor-v6/appvar/` (optional SecureStrings; defaults `support@topcoder.com`, `kiril.kartunov@topcoder.com,ramzy@topcoder.com`, `1`, `5`, `30`) |
 | `DATABASE_URL`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | `/config/forms-api-v6/appvar/` |
 | `AUTH0_URL`, `AUTH0_AUDIENCE`, optional `AUTH0_PROXY_SERVER_URL` | Forms API appvars when present, otherwise `/config/common/global-appvar/` |
 | `KAFKA_URL`, optional `KAFKA_SSL_ENABLED` | `/config/common/global-appvar/` |
@@ -105,6 +108,22 @@ python3 deploy/release.py production production-UNIQUE-RELEASE-ID
 Rollback by updating the existing service to the prior task ARN recorded in the
 release artifact. Keep additive API migrations. Disable the flow first if recipient
 or template settings need correction; a send already in progress may finish.
+
+## Release Let's talk AI classification (docs/adr/0001)
+
+1. Deploy tc-ai-api with the raised Let's talk input limits, and confirm the
+   processor's M2M client (the forms-api identity) has the scope `ai:letstalk:classify`.
+2. Deploy forms-api-v6 migration `20261022010000_lets_talk_classification`. It adds
+   `forms."SubmissionClassification"` and seven **disabled** flows, and leaves
+   `lets-talk-sales-email` unchanged.
+3. Set `AI_API_URL` (and `AI_AUTH0_AUDIENCE` if needed) in SSM and release this
+   service. The task fails startup if the new table is missing.
+4. Shadow mode: run `examples/lets-talk-shadow-mode.sql`. Check labels in the reports UI
+   and the `SubmissionClassification` queries in that file for 1–2 weeks.
+5. Create the SendGrid templates (`docs/emails/README.md`), set their ids and the
+   recipient settings above, and release again so the task reads them.
+6. Cut over with `examples/lets-talk-cutover.sql`, then send one test submission per
+   label in dev before production.
 
 ## Historical CloudFormation bootstrap
 
