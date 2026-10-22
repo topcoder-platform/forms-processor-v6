@@ -83,10 +83,12 @@ beforeEach(async () => {
 });
 test("disabled flows queue; enabling later sends once despite duplicate Kafka delivery", async () => {
   await Promise.all([store.enqueue(event), store.enqueue(event)]);
+  await due(); // see due(): a just-inserted row may not be due yet
   assert.equal(await store.routeOne(), true);
   assert.equal(await store.routeOne(), false);
   assert.equal(await store.deliverOne(), false);
   await pool.query('UPDATE forms."ProcessorFlow" SET enabled = true');
+  await due();
   assert.equal(await store.deliverOne(), true);
   await store.enqueue(event);
   assert.equal(await store.routeOne(), false);
@@ -255,6 +257,30 @@ test("form-key migration reroutes missed website events and preserves configurat
 // Two-stage routing with AI classification (ADR 0001)
 // ---------------------------------------------------------------------------
 
+/**
+ * Make pending events and deliveries due, then run one step. TIMESTAMPTZ(3) can round
+ * a row's default now() ahead of the next transaction's now() within the same
+ * millisecond, so a row created a moment ago may not be due yet (seen on CI).
+ */
+async function due(): Promise<void> {
+  await pool.query(
+    `UPDATE forms."ProcessorEvent" SET "nextAttemptAt" = now() - interval '1 second'
+     WHERE "routedAt" IS NULL AND "nextAttemptAt" <= now() + interval '1 second'`,
+  );
+  await pool.query(
+    `UPDATE forms."ProcessorDelivery" SET "nextAttemptAt" = now() - interval '1 second'
+     WHERE "deliveredAt" IS NULL AND "nextAttemptAt" <= now() + interval '1 second'`,
+  );
+}
+async function route(target: Store): Promise<boolean> {
+  await due();
+  return target.routeOne();
+}
+async function deliver(target: Store): Promise<boolean> {
+  await due();
+  return target.deliverOne();
+}
+
 const RUN_ID = "6f1c2a9e-6b7d-4e8f-9a01-2b3c4d5e6f70";
 const classified = (label: string): ClassificationRecord => ({
   workflowId: "lets-talk-classification",
@@ -346,10 +372,10 @@ test("stage 1 routes only the classify flow; the label then routes its own flows
   }));
   await setUpLetsTalk(["SALES_LEAD", "JUNK"]);
   await s.enqueue(event);
-  await s.routeOne();
+  await route(s);
   assert.deepEqual(await deliveries(), { classify: "pending:null" });
 
-  assert.equal(await s.deliverOne(), true);
+  assert.equal(await deliver(s), true);
   assert.deepEqual(await deliveries(), {
     classify: "delivered",
     "reply-SALES_LEAD": "pending:null",
@@ -362,12 +388,12 @@ test("stage 1 routes only the classify flow; the label then routes its own flows
   assert.ok(row.classifiedAt);
 
   // The label flow sees the stored classification in its context.
-  assert.equal(await s.deliverOne(), true);
+  assert.equal(await deliver(s), true);
   assert.equal(emails.length, 1);
   assert.deepEqual(emails[0].flowSettings, { flow: "SALES_LEAD" });
   assert.equal(emails[0].context?.classification?.label, "SALES_LEAD");
   assert.equal(emails[0].context?.classification?.confidence, 0.9);
-  assert.equal(await s.deliverOne(), false);
+  assert.equal(await deliver(s), false);
 });
 
 test("JUNK has no flow, so nothing is sent; disabled label flows get no queued delivery", async () => {
@@ -376,8 +402,8 @@ test("JUNK has no flow, so nothing is sent; disabled label flows get no queued d
   }));
   await setUpLetsTalk(["SALES_LEAD"]);
   await s.enqueue(event);
-  await s.routeOne();
-  await s.deliverOne();
+  await route(s);
+  await deliver(s);
   assert.deepEqual(await deliveries(), { classify: "delivered" });
   assert.equal((await classification()).label, "JUNK");
 
@@ -391,13 +417,13 @@ test("JUNK has no flow, so nothing is sent; disabled label flows get no queued d
     `UPDATE forms."ProcessorFlow" SET enabled = false WHERE id = 'reply-JUNK'`,
   );
   await s.enqueue(event);
-  await s.routeOne();
-  await s.deliverOne();
+  await route(s);
+  await deliver(s);
   assert.deepEqual(await deliveries(), { classify: "delivered" });
   await pool.query(
     `UPDATE forms."ProcessorFlow" SET enabled = true WHERE id = 'reply-JUNK'`,
   );
-  assert.equal(await s.deliverOne(), false);
+  assert.equal(await deliver(s), false);
   assert.equal(emails.length, 0);
 });
 
@@ -414,8 +440,8 @@ test("a retryable failure saves the in-progress run with the deferred delivery",
   });
   await setUpLetsTalk(["SALES_LEAD"]);
   await s.enqueue(event);
-  await s.routeOne();
-  await s.deliverOne();
+  await route(s);
+  await deliver(s);
   assert.deepEqual(await deliveries(), { classify: "pending:ai_timeout" });
   const row = await classification();
   assert.deepEqual(
@@ -448,9 +474,9 @@ test("a final failure records FAILED/UNKNOWN and routes the UNKNOWN fallback", a
   }));
   await setUpLetsTalk(["UNKNOWN", "SALES_LEAD"]);
   await s.enqueue(event);
-  await s.routeOne();
-  await s.deliverOne();
-  await s.deliverOne();
+  await route(s);
+  await deliver(s);
+  await deliver(s);
   assert.deepEqual(await deliveries(), {
     classify: "delivered",
     "reply-UNKNOWN": "delivered",
@@ -466,8 +492,8 @@ test("a submission deleted before classification completes the delivery without 
   await setUpLetsTalk(["SALES_LEAD"]);
   await pool.query('DELETE FROM forms."Submission"');
   await s.enqueue(event);
-  await s.routeOne();
-  assert.equal(await s.deliverOne(), true);
+  await route(s);
+  assert.equal(await deliver(s), true);
   assert.deepEqual(await deliveries(), {
     classify: "skipped_submission_missing",
   });
@@ -506,9 +532,9 @@ test("the reply-cap counter counts other submissions' accepted replies to the sa
   for (const submission of [event, second]) {
     await setUpLetsTalk(["SALES_LEAD"], submission.submissionId);
     await counting.enqueue(submission);
-    await counting.routeOne();
-    await counting.deliverOne();
-    await counting.deliverOne();
+    await route(counting);
+    await deliver(counting);
+    await deliver(counting);
   }
   // First reply: nothing before it. Second: the first submission's accepted reply.
   assert.deepEqual(counts, [0, 1]);
@@ -522,9 +548,9 @@ test("the reply-cap counter counts other submissions' accepted replies to the sa
   };
   await setUpLetsTalk(["SALES_LEAD"], third.submissionId);
   await counting.enqueue(third);
-  await counting.routeOne();
-  await counting.deliverOne();
-  await counting.deliverOne();
+  await route(counting);
+  await deliver(counting);
+  await deliver(counting);
   assert.deepEqual(counts, [0, 1, 0]);
 });
 
@@ -561,7 +587,7 @@ test("the migration seeds the Let's talk flows disabled, and stage 1 ignores the
   assert.ok(rows.every((flow) => !flow.enabled));
   await pool.query('UPDATE forms."ProcessorFlow" SET enabled = true');
   await store.enqueue(event);
-  await store.routeOne();
+  await route(store);
   assert.deepEqual(Object.keys(await deliveries()), [
     "lets-talk-classify",
     "lets-talk-sales-email",
