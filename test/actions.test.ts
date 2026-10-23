@@ -151,14 +151,14 @@ test("the sales reply sets the trusted reply-to and copies the rest, never the r
     event,
     {
       ...replySettings,
-      replyTo: "Kiril.Kartunov@topcoder.com",
-      cc: ["ramzy@topcoder.com", "TEST@example.com"],
+      replyTo: "Support@topcoder.com",
+      cc: ["test1@topcoder.com", "TEST@example.com"],
     },
     context(),
   );
-  assert.equal(published[0].payload.replyTo, "kiril.kartunov@topcoder.com");
+  assert.equal(published[0].payload.replyTo, "support@topcoder.com");
   // The fixture submitter is test@example.com, so it is not also copied.
-  assert.deepEqual(published[0].payload.cc, ["ramzy@topcoder.com"]);
+  assert.deepEqual(published[0].payload.cc, ["test1@topcoder.com"]);
 });
 
 test("the per-address cap skips a reply without publishing; a missing address is skipped too", async () => {

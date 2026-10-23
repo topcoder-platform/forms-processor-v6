@@ -107,15 +107,15 @@ test("flow settings: the sales reply's first address is reply-to and the rest ar
       ...base,
       LETS_TALK_SALES_REPLY_TEMPLATE_ID: "d-" + "b".repeat(32),
       LETS_TALK_SALES_REPLY_TO:
-        "Kiril@topcoder.com, ramzy@topcoder.com, sales@topcoder.com",
+        "Support@topcoder.com, test1@topcoder.com, sales@topcoder.com",
     }),
   );
   assert.deepEqual(settings.get(LETS_TALK_FLOWS.salesReply), {
     recipientsFromAnswer: "email",
     templateId: "d-" + "b".repeat(32),
     replyCapPerDay: 1,
-    replyTo: "kiril@topcoder.com",
-    cc: ["ramzy@topcoder.com", "sales@topcoder.com"],
+    replyTo: "support@topcoder.com",
+    cc: ["test1@topcoder.com", "sales@topcoder.com"],
   });
 });
 
@@ -125,8 +125,8 @@ test("flow settings: defaults, support forward and classification", () => {
     recipientsFromAnswer: "email",
     templateId: "",
     replyCapPerDay: 1,
-    replyTo: "kiril.kartunov@topcoder.com",
-    cc: ["ramzy@topcoder.com"],
+    replyTo: "support@topcoder.com",
+    cc: ["test1@topcoder.com"],
   });
   assert.deepEqual(settings.get(LETS_TALK_FLOWS.supportForward), {
     recipients: ["support@topcoder.com"],

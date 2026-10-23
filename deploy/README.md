@@ -32,7 +32,7 @@ parameters and `kms:Decrypt` when a customer-managed key is used.
 | `LETS_TALK_SENDGRID_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID` (SecureString; active `d-` dynamic-template ID) |
 | `AI_API_URL`, `AI_AUTH0_AUDIENCE` | `/config/forms-processor-v6/appvar/` (optional SecureStrings; tc-ai-api base ending in `/v6/ai`, e.g. `https://api.topcoder.com/v6/ai`; the audience defaults to `AUTH0_AUDIENCE`) |
 | `LETS_TALK_OPPORTUNITY_TEMPLATE_ID`, `LETS_TALK_SKILLS_TEMPLATE_ID`, `LETS_TALK_GENERAL_TEMPLATE_ID`, `LETS_TALK_WIPRO_TEMPLATE_ID`, `LETS_TALK_SALES_REPLY_TEMPLATE_ID`, `LETS_TALK_SUPPORT_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/` (optional SecureStrings; one SendGrid template per label flow, see `docs/emails/README.md`) |
-| `LETS_TALK_SUPPORT_RECIPIENTS`, `LETS_TALK_SALES_REPLY_TO`, `LETS_TALK_REPLY_CAP_PER_DAY`, `LETS_TALK_CLASSIFY_MAX_ATTEMPTS`, `LETS_TALK_CLASSIFY_MAX_AGE_MINUTES` | `/config/forms-processor-v6/appvar/` (optional SecureStrings; defaults `support@topcoder.com`, `kiril.kartunov@topcoder.com,ramzy@topcoder.com`, `1`, `5`, `30`) |
+| `LETS_TALK_SUPPORT_RECIPIENTS`, `LETS_TALK_SALES_REPLY_TO`, `LETS_TALK_REPLY_CAP_PER_DAY`, `LETS_TALK_CLASSIFY_MAX_ATTEMPTS`, `LETS_TALK_CLASSIFY_MAX_AGE_MINUTES` | `/config/forms-processor-v6/appvar/` (optional SecureStrings; defaults `support@topcoder.com`, `support@topcoder.com,test1@topcoder.com`, `1`, `5`, `30`) |
 | `DATABASE_URL`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | `/config/forms-api-v6/appvar/` |
 | `AUTH0_URL`, `AUTH0_AUDIENCE`, optional `AUTH0_PROXY_SERVER_URL` | Forms API appvars when present, otherwise `/config/common/global-appvar/` |
 | `KAFKA_URL`, optional `KAFKA_SSL_ENABLED` | `/config/common/global-appvar/` |

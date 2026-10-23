@@ -65,7 +65,7 @@ const schema = z.object({
   LETS_TALK_SUPPORT_RECIPIENTS: emailList("support@topcoder.com"),
   /** First address: the sales reply's reply-to; the rest are copied (email-service-v6 takes one reply-to). */
   LETS_TALK_SALES_REPLY_TO: emailList(
-    "kiril.kartunov@topcoder.com,ramzy@topcoder.com",
+    "support@topcoder.com,test1@topcoder.com",
   ),
   LETS_TALK_REPLY_CAP_PER_DAY: z.coerce
     .number()

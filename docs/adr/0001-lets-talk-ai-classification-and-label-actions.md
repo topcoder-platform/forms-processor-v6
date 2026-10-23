@@ -29,7 +29,7 @@ The requirements:
    - JUNK: nothing;
    - COMMUNITY_OPPORTUNITY, COMMUNITY_SKILLS, COMMUNITY_GENERAL and WIPRO_QUERIES: a reply to the submitter, each with its own template (see [`docs/emails/`](../emails/README.md)). For WIPRO_QUERIES this was confirmed on 2026-10-22: an automatic reply, not an internal hand-off;
    - COMMUNITY_SUPPORT: forward to `support@topcoder.com`;
-   - SALES_LEAD: a templated reply whose reply-to comes from a configurable list (`LETS_TALK_SALES_REPLY_TO`, default `kiril.kartunov@topcoder.com`, `ramzy@topcoder.com`; Decision 7).
+   - SALES_LEAD: a templated reply whose reply-to comes from a configurable list (`LETS_TALK_SALES_REPLY_TO`, default `support@topcoder.com`, `test1@topcoder.com`; Decision 7).
 4. Replace the "send everything to fixed emails" behaviour.
 
 Constraints from the existing system:
@@ -129,14 +129,16 @@ A submission whose classification ends `FAILED` keeps the label `UNKNOWN`. It is
 
 `needsReview` doesn't change the action; it is shown in the UI. Holding auto-replies for review would affect at least the 45% of submissions with an empty message (Q1).
 
-### 7. Sales reply: Kiril signs and gets the replies, the rest of the list is copied
+### 7. Sales reply: the first listed address gets the replies, the rest are copied
 
 Decided 2026-10-22, revising the earlier "one address per submission from a pool". The sales reply should reach a configurable list of people (`LETS_TALK_SALES_REPLY_TO`). email-service-v6 accepts a single `replyTo`, so:
 
-- the **first** address in the list is the `replyTo` (default `kiril.kartunov@topcoder.com`, matching the template's hard-coded signature and `mailto:`);
-- **every other** address is **copied (`cc`)** on the reply sent to the prospect (default `ramzy@topcoder.com`).
+- the **first** address in the list is the `replyTo` (default `support@topcoder.com`);
+- **every other** address is **copied (`cc`)** on the reply sent to the prospect (default `test1@topcoder.com`).
 
-The copies also mean the sales team sees every sales reply, which answers Q4. A list with all addresses as true reply-to targets would need SendGrid's `reply_to_list` in email-service-v6, which stays a possible follow-up.
+The copies also mean the sales team sees every sales reply, which answers Q4.
+
+The template keeps Kiril Kartunov's signature and `mailto:` (Q8). With the defaults (2026-10-23: `support@topcoder.com`, `test1@topcoder.com`), a prospect who presses Reply writes to support, not to the signer. For production, set `LETS_TALK_SALES_REPLY_TO` so its first address is the person who signs. A list with all addresses as true reply-to targets would need SendGrid's `reply_to_list` in email-service-v6, which stays a possible follow-up.
 
 ### 8. Shadow-mode rollout
 
@@ -179,7 +181,7 @@ The copies also mean the sales team sees every sales reply, which answers Q4. A 
 
 1. **Q1 `needsReview`:** act on the label anyway, and show the flag in the UI (Decision 6).
 2. **Q2 Failure:** fall back to the legacy internal email (Decision 6).
-3. **Q3 / Q8 Reply-to and signature** (answered 2026-10-22): Kiril signs and receives replies; the rest of the list is copied (Decision 7).
+3. **Q3 / Q8 Reply-to and signature** (answered 2026-10-22): the template keeps Kiril's signature; replies go to the first `LETS_TALK_SALES_REPLY_TO` address and the rest are copied (Decision 7).
 4. **Q4 Internal sales notification:** covered by the copies in Decision 7.
 5. **Q5 Support:** an email to `support@topcoder.com` (`LETS_TALK_SUPPORT_RECIPIENTS`), with reply-to set to the submitter.
 6. **Q6 Backfill:** none; historical submissions report as `UNKNOWN`.

@@ -236,14 +236,14 @@ test("label-action settings: defaults, list normalization and safe failures", ()
     "support@topcoder.com",
   ]);
   assert.deepEqual(defaults.LETS_TALK_SALES_REPLY_TO, [
-    "kiril.kartunov@topcoder.com",
-    "ramzy@topcoder.com",
+    "support@topcoder.com",
+    "test1@topcoder.com",
   ]);
   assert.equal(defaults.LETS_TALK_REPLY_CAP_PER_DAY, 1);
   assert.equal(defaults.LETS_TALK_CLASSIFY_MAX_ATTEMPTS, 5);
   assert.equal(defaults.LETS_TALK_CLASSIFY_MAX_AGE_MINUTES, 30);
   for (const [key, value] of [
-    ["LETS_TALK_SALES_REPLY_TO", "kiril@topcoder.com,"],
+    ["LETS_TALK_SALES_REPLY_TO", "support@topcoder.com,"],
     ["LETS_TALK_SUPPORT_RECIPIENTS", "not-an-email"],
     ["LETS_TALK_WIPRO_TEMPLATE_ID", "d-123"],
     ["LETS_TALK_REPLY_CAP_PER_DAY", "-1"],
