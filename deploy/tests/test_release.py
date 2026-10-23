@@ -56,8 +56,8 @@ class ReleaseTests(unittest.TestCase):
     def test_secret_sources_and_types(self):
         """Three bounded non-decrypting reads return only named references with the intended precedence.
 
-        Both providers' settings and the shared USE_KEYCLOAK flag are referenced, so the
-        provider can be switched by the flag alone.
+        When both providers are configured, both sets and the shared USE_KEYCLOAK flag are
+        referenced, so the provider can be switched by the flag alone.
         """
         refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
         self.assertEqual(refs['USE_KEYCLOAK'], '/config/common/global-appvar/USE_KEYCLOAK')
@@ -95,16 +95,39 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'KEYCLOAK_TOKEN_URL'):
             release.secret_references(self.ssm)
 
-    def test_provider_flag_and_both_credential_sets_are_required(self):
-        """USE_KEYCLOAK comes only from the shared global path; either provider's missing credentials raise."""
-        for path in ['/config/common/global-appvar/USE_KEYCLOAK',
-                     '/config/forms-api-v6/appvar/AUTH0_CLIENT_SECRET',
+    def test_provider_sets_are_all_or_nothing_and_the_flag_is_optional(self):
+        """USE_KEYCLOAK comes only from the shared global path and may be absent (Auth0 mode).
+
+        Each provider's settings are referenced when complete and skipped when absent; a
+        partial set or no complete set raises. Takes no arguments and returns nothing.
+        """
+        flag = self.parameters.pop('/config/common/global-appvar/USE_KEYCLOAK')
+        refs = {r['name'] for r in release.secret_references(self.ssm)}
+        self.assertNotIn('USE_KEYCLOAK', refs)
+        self.assertIn('KEYCLOAK_CLIENT_SECRET', refs)
+        self.parameters['/config/common/global-appvar/USE_KEYCLOAK'] = flag
+        for path in ['/config/forms-api-v6/appvar/AUTH0_CLIENT_SECRET',
                      '/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_CLIENT_SECRET']:
             with self.subTest(path=path):
                 saved = self.parameters.pop(path)
-                with self.assertRaisesRegex(RuntimeError, 'Missing required SSM parameter: ' + path.rsplit('/', 1)[1]):
+                with self.assertRaisesRegex(RuntimeError, 'Incomplete .* missing SSM parameter: ' + path.rsplit('/', 1)[1]):
                     release.secret_references(self.ssm)
                 self.parameters[path] = saved
+        keycloak = {path: self.parameters.pop(path) for path in list(self.parameters)
+                    if path.startswith('/config/forms-processor-v6/keycloak-m2m/')}
+        refs = {r['name'] for r in release.secret_references(self.ssm)}
+        self.assertFalse(any(name.startswith('KEYCLOAK_') for name in refs))
+        self.assertTrue({'AUTH0_CLIENT_ID', 'AUTH0_URL', 'USE_KEYCLOAK'} <= refs)
+        for name in ['AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET']:
+            del self.parameters['/config/forms-api-v6/appvar/' + name]
+        for name in ['AUTH0_URL', 'AUTH0_AUDIENCE']:
+            self.parameters.pop('/config/forms-api-v6/appvar/' + name, None)
+            del self.parameters['/config/common/global-appvar/' + name]
+        with self.assertRaisesRegex(RuntimeError, 'no complete Keycloak or Auth0'):
+            release.secret_references(self.ssm)
+        self.parameters.update(keycloak)
+        refs = {r['name'] for r in release.secret_references(self.ssm)}
+        self.assertFalse(any(name.startswith('AUTH0_') for name in refs))
         self.parameters['/config/forms-processor-v6/appvar/USE_KEYCLOAK'] = {
             'Name': '/config/forms-processor-v6/appvar/USE_KEYCLOAK', 'Type': 'String'}
         refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}

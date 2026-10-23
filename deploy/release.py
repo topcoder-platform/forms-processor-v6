@@ -34,19 +34,32 @@ def read_service(ecs):
     return service
 
 
+# Each M2M provider's settings are referenced as a complete set or not at all.
+PROVIDER_SETS = {
+    'Keycloak': ({'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_CLIENT_SECRET', 'KEYCLOAK_ISSUER',
+                  'KEYCLOAK_TOKEN_URL', 'KEYCLOAK_AUDIENCE'}, {'KEYCLOAK_SCOPE'}),
+    'Auth0': ({'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'AUTH0_URL', 'AUTH0_AUDIENCE'},
+              {'AUTH0_PROXY_SERVER_URL'}),
+}
+
+
 def secret_references(ssm):
     """Resolve named SSM references in batches of ten, without decrypting SecureStrings.
 
-    Takes an SSM client; returns name/valueFrom pairs. Both M2M providers' settings are
-    referenced so USE_KEYCLOAK (shared, from /config/common/global-appvar) can switch
-    between them with a forced new deployment and no release: Keycloak settings use the
-    dedicated workload prefix with no Auth0/shared credential fallback; the pre-migration
-    Auth0 settings use the Forms API credentials, and API Auth0 URL/audience/proxy
-    settings take precedence over shared defaults. Kafka uses globals. Missing optional
-    sales settings permit a disabled-flow deployment. Raises for absent required values
-    or sales/Bus parameters that are not SecureStrings; AWS errors propagate after
-    client retries. GetParameters values are discarded; only names/types are used.
-    Avoids the low-throughput DescribeParameters scan of whole parameter prefixes.
+    Takes an SSM client; returns name/valueFrom pairs. USE_KEYCLOAK (shared, from
+    /config/common/global-appvar) is referenced when it exists; without it the task runs
+    in Auth0 mode. Each M2M provider's settings are referenced when complete and skipped
+    when entirely absent, so a forced new deployment can switch providers whenever both
+    sets exist, and an environment with only one provider still releases. Keycloak
+    settings use the dedicated workload prefix with no Auth0/shared credential fallback;
+    the pre-migration Auth0 settings use the Forms API credentials, and API Auth0
+    URL/audience/proxy settings take precedence over shared defaults. Kafka uses globals.
+    Missing optional sales settings permit a disabled-flow deployment.
+
+    Raises RuntimeError for absent required values, a partially configured provider,
+    no complete provider, or sales/Bus parameters that are not SecureStrings; AWS errors
+    propagate after client retries. GetParameters values are discarded; only names/types
+    are used. Avoids the low-throughput DescribeParameters scan of whole parameter prefixes.
     """
     prefixes = {'api': '/config/forms-api-v6/appvar',
                 'app': f'/config/{APP}/appvar',
@@ -67,12 +80,25 @@ def secret_references(ssm):
     for start in range(0, len(names), 10):
         response = ssm.get_parameters(Names=names[start:start + 10], WithDecryption=False)
         available.update({p['Name']: p['Type'] for p in response['Parameters']})
-    optional = {'KEYCLOAK_SCOPE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_SSL_ENABLED',
+    paths = {name: next((prefixes[source] + '/' + name for source in candidates
+                         if prefixes[source] + '/' + name in available), None)
+             for name, candidates in sources.items()}
+    skipped = set()
+    for provider, (required, optional_names) in PROVIDER_SETS.items():
+        missing = sorted(name for name in required if paths[name] is None)
+        if len(missing) == len(required):
+            skipped |= required | optional_names
+        elif missing:
+            raise RuntimeError(f'Incomplete {provider} M2M settings; missing SSM parameter: ' + ', '.join(missing))
+    if all(required <= skipped for required, _ in PROVIDER_SETS.values()):
+        raise RuntimeError('Missing required SSM parameters: no complete Keycloak or Auth0 M2M settings')
+    optional = {'USE_KEYCLOAK', 'KEYCLOAK_SCOPE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_SSL_ENABLED',
                 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'}
     references = []
-    for name, candidates in sources.items():
-        path = next((prefixes[source] + '/' + name for source in candidates
-                     if prefixes[source] + '/' + name in available), None)
+    for name in sources:
+        path = paths[name]
+        if name in skipped:
+            continue
         if path is None:
             if name not in optional:
                 raise RuntimeError('Missing required SSM parameter: ' + name)

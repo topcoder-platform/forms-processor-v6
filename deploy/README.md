@@ -1,4 +1,4 @@
-> Keycloak migration branch only: do not run release.py or deploy this template before rollout approval. Releases reference both the Keycloak and the Auth0 settings; `/config/common/global-appvar/USE_KEYCLOAK` selects which one the worker uses. Existing verification/status JSON files describe historical Auth0 deployments. No service is deployed by these source changes.
+> Keycloak migration branch only: do not run release.py or deploy this template before rollout approval. Releases reference each provider's settings that exist (Keycloak, Auth0 or both); `/config/common/global-appvar/USE_KEYCLOAK` selects which one the worker uses. Existing verification/status JSON files describe historical Auth0 deployments. No service is deployed by these source changes.
 
 # Deployment to existing ECS services
 
@@ -33,7 +33,7 @@ parameters and `kms:Decrypt` when a customer-managed key is used.
 | `LETS_TALK_RECIPIENTS` | `/config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS` (SecureString; comma-separated addresses) |
 | `LETS_TALK_SENDGRID_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID` (SecureString; active `d-` dynamic-template ID) |
 | `DATABASE_URL` | `/config/forms-api-v6/appvar/` |
-| `USE_KEYCLOAK` | `/config/common/global-appvar/USE_KEYCLOAK` (required; `true` = Keycloak, `false` = Auth0) |
+| `USE_KEYCLOAK` | `/config/common/global-appvar/USE_KEYCLOAK` (optional; `true` = Keycloak, `false` or absent = Auth0) |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, optional `KEYCLOAK_SCOPE` | `/config/forms-processor-v6/keycloak-m2m/`; no fallback to Forms API or Auth0 credentials |
 | `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | `/config/forms-api-v6/appvar/` (as before the Keycloak migration) |
 | `AUTH0_URL`, `AUTH0_AUDIENCE`, optional `AUTH0_PROXY_SERVER_URL` | Forms API appvars when present, otherwise `/config/common/global-appvar/` |
@@ -120,8 +120,8 @@ or the old `release.py` procedure can revert a newer ECS release. The dev execut
 role from that bootstrap needs access to the new processor SSM paths before its first
 new release. Provision infrastructure separately if the production service is missing.
 
-The release builder references both providers' settings and `USE_KEYCLOAK`, removes stale literal copies of them from the task environment, and requires a SecureString Keycloak client secret. Provision the dedicated workload parameters and `write:bus_api` grant before rollout. No shared Auth0 parameter is modified.
+The release builder references each provider's settings as a complete set: a set that is entirely absent is skipped (for example production before Keycloak is provisioned), a partial set or no complete set stops the release, and `USE_KEYCLOAK` is referenced when it exists. It removes stale literal copies of these names from the task environment and requires a SecureString Keycloak client secret. Provision the dedicated workload parameters and `write:bus_api` grant before rollout. No shared Auth0 parameter is modified.
 
-**Switching providers:** set `/config/common/global-appvar/USE_KEYCLOAK` to `true` (Keycloak) or `false` (Auth0, the rollback) and force a new deployment of the service so tasks re-read SSM; no release or code change is needed.
+**Switching providers:** set `/config/common/global-appvar/USE_KEYCLOAK` to `true` (Keycloak) or `false` (Auth0, the rollback) and force a new deployment of the service so tasks re-read SSM; no release or code change is needed as long as both providers' settings existed at the last release. If one set was skipped, run a release after creating it. The CloudFormation template (used only to create the stack) references both sets, so both must exist when it is applied.
 
 An existing ECS execution role must be allowed to read the dedicated Keycloak SSM prefix, `/config/common/global-appvar/USE_KEYCLOAK` and the Auth0 parameters above (and decrypt their KMS key). `release.py` preserves role assignments; the branch template (`BusCredentialsPrefix` for Keycloak, `Auth0CredentialsPrefix` for Auth0) includes the required parameter paths. Prepare those permissions before releasing the branch.
