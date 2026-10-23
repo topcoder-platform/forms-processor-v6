@@ -22,7 +22,7 @@
     "@platformatic/kafka": "2.8.0",
     "pg": "8.23.0",
     "zod": "4.3.6",
-    "tc-core-library-js": "https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/e844764e1c2cadcc01fd5e05029590319802af09"
+    "tc-core-library-js": "https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/112d54a3ed66423e7305e94e174937823e76124e"
   },
   "devDependencies": {
     "@eslint/js": "9.39.2",
