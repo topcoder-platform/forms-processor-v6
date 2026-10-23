@@ -1,4 +1,4 @@
-> Keycloak migration branch only: do not run release.py or deploy this template before rollout approval. Existing verification/status JSON files describe historical Auth0 deployments. No service is deployed by these source changes.
+> Keycloak migration branch only: do not run release.py or deploy this template before rollout approval. Releases reference both the Keycloak and the Auth0 settings; `/config/common/global-appvar/USE_KEYCLOAK` selects which one the worker uses. Existing verification/status JSON files describe historical Auth0 deployments. No service is deployed by these source changes.
 
 # Deployment to existing ECS services
 
@@ -18,8 +18,8 @@ failed rollout or timeout. It records current/previous task ARNs in a release ar
 
 ## Runtime parameter sources
 
-Values are injected by ECS at task startup. The release script resolves the 14
-allowlisted candidate names using two `GetParameters` requests (at most ten names
+Values are injected by ECS at task startup. The release script resolves the 21
+allowlisted candidate names using three `GetParameters` requests (at most ten names
 per request), with `WithDecryption=false`. It uses only names and types, discarding
 returned values, and never scans parameter prefixes with `DescribeParameters`.
 The SSM client uses standard exponential-backoff retries, capped at ten total
@@ -33,7 +33,10 @@ parameters and `kms:Decrypt` when a customer-managed key is used.
 | `LETS_TALK_RECIPIENTS` | `/config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS` (SecureString; comma-separated addresses) |
 | `LETS_TALK_SENDGRID_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID` (SecureString; active `d-` dynamic-template ID) |
 | `DATABASE_URL` | `/config/forms-api-v6/appvar/` |
+| `USE_KEYCLOAK` | `/config/common/global-appvar/USE_KEYCLOAK` (required; `true` = Keycloak, `false` = Auth0) |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, optional `KEYCLOAK_SCOPE` | `/config/forms-processor-v6/keycloak-m2m/`; no fallback to Forms API or Auth0 credentials |
+| `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | `/config/forms-api-v6/appvar/` (as before the Keycloak migration) |
+| `AUTH0_URL`, `AUTH0_AUDIENCE`, optional `AUTH0_PROXY_SERVER_URL` | Forms API appvars when present, otherwise `/config/common/global-appvar/` |
 | `KAFKA_URL`, optional `KAFKA_SSL_ENABLED` | `/config/common/global-appvar/` |
 
 Only these named references are imported. The processor does not receive the API's
@@ -117,6 +120,8 @@ or the old `release.py` procedure can revert a newer ECS release. The dev execut
 role from that bootstrap needs access to the new processor SSM paths before its first
 new release. Provision infrastructure separately if the production service is missing.
 
-The release builder sets `M2M_PROVIDER=keycloak`, removes stale Auth0 runtime settings, and requires a SecureString client secret. Provision the dedicated workload parameters and `write:bus_api` grant before rollout. No shared Auth0 parameter is modified.
+The release builder references both providers' settings and `USE_KEYCLOAK`, removes stale literal copies of them from the task environment, and requires a SecureString Keycloak client secret. Provision the dedicated workload parameters and `write:bus_api` grant before rollout. No shared Auth0 parameter is modified.
 
-An existing ECS execution role must be allowed to read the dedicated Keycloak SSM prefix (and decrypt its KMS key). `release.py` preserves role assignments; the branch template includes the required parameter paths. Prepare those permissions before releasing the branch.
+**Switching providers:** set `/config/common/global-appvar/USE_KEYCLOAK` to `true` (Keycloak) or `false` (Auth0, the rollback) and force a new deployment of the service so tasks re-read SSM; no release or code change is needed.
+
+An existing ECS execution role must be allowed to read the dedicated Keycloak SSM prefix, `/config/common/global-appvar/USE_KEYCLOAK` and the Auth0 parameters above (and decrypt their KMS key). `release.py` preserves role assignments; the branch template (`BusCredentialsPrefix` for Keycloak, `Auth0CredentialsPrefix` for Auth0) includes the required parameter paths. Prepare those permissions before releasing the branch.

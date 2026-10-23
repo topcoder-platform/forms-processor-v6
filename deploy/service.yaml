@@ -36,7 +36,11 @@ Parameters:
   BusCredentialsPrefix:
     Type: String
     Default: /config/forms-processor-v6/keycloak-m2m
-    Description: Dedicated workload SSM prefix containing Keycloak issuer, endpoint, audience and credentials.
+    Description: Dedicated workload SSM prefix containing Keycloak issuer, endpoint, audience and credentials (used when USE_KEYCLOAK=true).
+  Auth0CredentialsPrefix:
+    Type: String
+    Default: /config/forms-api-v6/appvar
+    Description: SSM prefix containing AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET for Bus API publishing (used when USE_KEYCLOAK is not true).
   SecretsKmsKeyArn:
     Type: String
     Default: ""
@@ -74,7 +78,7 @@ Resources:
             FromPort: 443,
             ToPort: 443,
             CidrIp: 0.0.0.0/0,
-            Description: AWS Keycloak and Bus API via NAT,
+            Description: AWS Keycloak/Auth0 and Bus API via NAT,
           }
         - IpProtocol: tcp
           FromPort: 5432
@@ -151,6 +155,12 @@ Resources:
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_TOKEN_URL
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_AUDIENCE
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BusCredentialsPrefix}/KEYCLOAK_ISSUER
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${Auth0CredentialsPrefix}/AUTH0_CLIENT_ID
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${Auth0CredentialsPrefix}/AUTH0_CLIENT_SECRET
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_URL
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_AUDIENCE
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/AUTH0_PROXY_SERVER_URL
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/config/common/global-appvar/USE_KEYCLOAK
               - !If
                 - HasSecretsKmsKey
                 - {
@@ -179,7 +189,6 @@ Resources:
           LinuxParameters: { InitProcessEnabled: true }
           Environment:
             - { Name: NODE_ENV, Value: production }
-            - { Name: M2M_PROVIDER, Value: keycloak }
             - {
                 Name: BUSAPI_URL,
                 Value:
@@ -217,6 +226,30 @@ Resources:
             - {
                 Name: KEYCLOAK_ISSUER,
                 ValueFrom: !Sub "${BusCredentialsPrefix}/KEYCLOAK_ISSUER",
+              }
+            - {
+                Name: AUTH0_CLIENT_ID,
+                ValueFrom: !Sub "${Auth0CredentialsPrefix}/AUTH0_CLIENT_ID",
+              }
+            - {
+                Name: AUTH0_CLIENT_SECRET,
+                ValueFrom: !Sub "${Auth0CredentialsPrefix}/AUTH0_CLIENT_SECRET",
+              }
+            - {
+                Name: AUTH0_URL,
+                ValueFrom: /config/common/global-appvar/AUTH0_URL,
+              }
+            - {
+                Name: AUTH0_AUDIENCE,
+                ValueFrom: /config/common/global-appvar/AUTH0_AUDIENCE,
+              }
+            - {
+                Name: AUTH0_PROXY_SERVER_URL,
+                ValueFrom: /config/common/global-appvar/AUTH0_PROXY_SERVER_URL,
+              }
+            - {
+                Name: USE_KEYCLOAK,
+                ValueFrom: /config/common/global-appvar/USE_KEYCLOAK,
               }
           HealthCheck:
             Command:

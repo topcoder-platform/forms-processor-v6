@@ -21,10 +21,10 @@ class ReleaseTests(unittest.TestCase):
     def setUp(self):
         """Build named-parameter fixtures for each test; takes no arguments and returns nothing."""
         entries = {
-            '/config/forms-api-v6/appvar': ['DATABASE_URL'],
+            '/config/forms-api-v6/appvar': ['DATABASE_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'AUTH0_URL'],
             '/config/forms-processor-v6/keycloak-m2m': ['KEYCLOAK_ISSUER', 'KEYCLOAK_TOKEN_URL', 'KEYCLOAK_AUDIENCE', 'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_CLIENT_SECRET', 'KEYCLOAK_SCOPE'],
             '/config/forms-processor-v6/appvar': ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'],
-            '/config/common/global-appvar': ['KAFKA_URL', 'KAFKA_SSL_ENABLED'],
+            '/config/common/global-appvar': ['USE_KEYCLOAK', 'AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL', 'KAFKA_SSL_ENABLED'],
         }
         self.parameters = {
             path + '/' + name: {'Name': path + '/' + name, 'Type': 'SecureString', 'Value': 'unused-ciphertext'}
@@ -54,35 +54,61 @@ class ReleaseTests(unittest.TestCase):
         ecs.update_service.assert_not_called()
 
     def test_secret_sources_and_types(self):
-        """Two bounded non-decrypting reads return only named references with the intended precedence."""
+        """Three bounded non-decrypting reads return only named references with the intended precedence.
+
+        Both providers' settings and the shared USE_KEYCLOAK flag are referenced, so the
+        provider can be switched by the flag alone.
+        """
         refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
+        self.assertEqual(refs['USE_KEYCLOAK'], '/config/common/global-appvar/USE_KEYCLOAK')
         self.assertEqual(refs['KEYCLOAK_TOKEN_URL'], '/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_TOKEN_URL')
         self.assertEqual(refs['KEYCLOAK_AUDIENCE'], '/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_AUDIENCE')
+        self.assertEqual(refs['AUTH0_CLIENT_ID'], '/config/forms-api-v6/appvar/AUTH0_CLIENT_ID')
+        self.assertEqual(refs['AUTH0_URL'], '/config/forms-api-v6/appvar/AUTH0_URL')
+        self.assertEqual(refs['AUTH0_AUDIENCE'], '/config/common/global-appvar/AUTH0_AUDIENCE')
         self.assertEqual(refs['DATABASE_URL'], '/config/forms-api-v6/appvar/DATABASE_URL')
         self.assertEqual(refs['KAFKA_URL'], '/config/common/global-appvar/KAFKA_URL')
         self.assertEqual(refs['BUSAPI_URL'], '/config/forms-processor-v6/appvar/BUSAPI_URL')
-        self.assertEqual(len(refs), 12)
+        self.assertEqual(len(refs), 18)
         self.assertNotIn('unused-ciphertext', json.dumps(refs))
-        self.assertEqual(self.ssm.get_parameters.call_count, 2)
+        self.assertEqual(self.ssm.get_parameters.call_count, 3)
         requested = [name for call in self.ssm.get_parameters.call_args_list for name in call.kwargs['Names']]
-        self.assertEqual(len(requested), 12)
-        self.assertEqual(len(set(requested)), 12)
+        self.assertEqual(len(requested), 21)
+        self.assertEqual(len(set(requested)), 21)
         self.assertNotIn('/config/forms-api-v6/appvar/MIGRATION_DATABASE_URL', requested)
         self.ssm.get_paginator.assert_not_called()
         self.ssm.describe_parameters.assert_not_called()
 
     def test_optional_parameters_and_no_auth_fallback(self):
-        """Optional sales/scope settings may be absent; required Keycloak settings never fall back to Auth0."""
+        """Optional sales/scope/proxy settings may be absent; absent API Auth0 settings use shared defaults;
+        required Keycloak settings never fall back to Auth0."""
         for name in ['LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID']:
             del self.parameters['/config/forms-processor-v6/appvar/' + name]
-        del self.parameters['/config/common/global-appvar/KAFKA_SSL_ENABLED']
+        for name in ['KAFKA_SSL_ENABLED', 'AUTH0_PROXY_SERVER_URL']:
+            del self.parameters['/config/common/global-appvar/' + name]
         del self.parameters['/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_SCOPE']
-        refs = release.secret_references(self.ssm)
-        self.assertEqual(len(refs), 8)
+        del self.parameters['/config/forms-api-v6/appvar/AUTH0_URL']
+        refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
+        self.assertEqual(refs['AUTH0_URL'], '/config/common/global-appvar/AUTH0_URL')
+        self.assertEqual(len(refs), 13)
         del self.parameters['/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_TOKEN_URL']
-        self.parameters['/config/common/global-appvar/AUTH0_URL'] = {'Name': '/config/common/global-appvar/AUTH0_URL', 'Type': 'SecureString'}
         with self.assertRaisesRegex(RuntimeError, 'KEYCLOAK_TOKEN_URL'):
             release.secret_references(self.ssm)
+
+    def test_provider_flag_and_both_credential_sets_are_required(self):
+        """USE_KEYCLOAK comes only from the shared global path; either provider's missing credentials raise."""
+        for path in ['/config/common/global-appvar/USE_KEYCLOAK',
+                     '/config/forms-api-v6/appvar/AUTH0_CLIENT_SECRET',
+                     '/config/forms-processor-v6/keycloak-m2m/KEYCLOAK_CLIENT_SECRET']:
+            with self.subTest(path=path):
+                saved = self.parameters.pop(path)
+                with self.assertRaisesRegex(RuntimeError, 'Missing required SSM parameter: ' + path.rsplit('/', 1)[1]):
+                    release.secret_references(self.ssm)
+                self.parameters[path] = saved
+        self.parameters['/config/forms-processor-v6/appvar/USE_KEYCLOAK'] = {
+            'Name': '/config/forms-processor-v6/appvar/USE_KEYCLOAK', 'Type': 'String'}
+        refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
+        self.assertEqual(refs['USE_KEYCLOAK'], '/config/common/global-appvar/USE_KEYCLOAK')
 
     def test_required_parameter_missing_fails(self):
         """A missing required database reference raises instead of publishing a broken task."""
@@ -129,7 +155,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_sdk_retries_throttling_and_has_a_finite_budget(self):
         """Exercise real SDK retry handling offline: recover after five throttles and stop after ten attempts."""
-        for throttle_count, expected_requests in [(5, 7), (100, 10)]:
+        for throttle_count, expected_requests in [(5, 8), (100, 10)]:
             with self.subTest(throttle_count=throttle_count):
                 ssm = boto3.client('ssm', region_name='us-east-1', aws_access_key_id='test',
                                    aws_secret_access_key='test', config=release.SSM_CLIENT_CONFIG)
@@ -149,7 +175,7 @@ class ReleaseTests(unittest.TestCase):
                 with patch.object(ssm._endpoint.http_session, 'send', side_effect=respond), \
                         patch('botocore.endpoint.time.sleep'):
                     if throttle_count == 5:
-                        self.assertEqual(len(release.secret_references(ssm)), 12)
+                        self.assertEqual(len(release.secret_references(ssm)), 18)
                     else:
                         with self.assertRaises(ClientError):
                             release.secret_references(ssm)
@@ -164,7 +190,8 @@ class ReleaseTests(unittest.TestCase):
                    'executionRoleArn': 'execution', 'taskRoleArn': 'task', 'cpu': '256', 'memory': '512',
                    'networkMode': 'awsvpc', 'requiresCompatibilities': ['FARGATE'],
                    'containerDefinitions': [{'name': release.APP, 'image': 'old', 'readonlyRootFilesystem': True,
-                       'environment': [{'name': 'BUSAPI_URL', 'value': 'old'}, {'name': 'KAFKA_SSL_ENABLED', 'value': 'true'}],
+                       'environment': [{'name': 'BUSAPI_URL', 'value': 'old'}, {'name': 'KAFKA_SSL_ENABLED', 'value': 'true'},
+                                       {'name': 'USE_KEYCLOAK', 'value': 'true'}, {'name': 'AUTH0_URL', 'value': 'old'}],
                        'secrets': [{'name': 'LETS_TALK_RECIPIENTS', 'valueFrom': 'old'}, {'name': 'OTHER', 'valueFrom': '/other'}]},
                        {'name': 'sidecar', 'image': 'sidecar'}]}
         refs = [{'name': 'BUSAPI_URL', 'valueFrom': '/config/forms-processor-v6/appvar/BUSAPI_URL'}]
@@ -174,7 +201,7 @@ class ReleaseTests(unittest.TestCase):
         for key in ['executionRoleArn', 'taskRoleArn', 'cpu', 'memory', 'networkMode', 'requiresCompatibilities']:
             self.assertEqual(result[key], current[key])
         container = result['containerDefinitions'][0]
-        self.assertEqual(container['environment'], [{'name': 'KAFKA_SSL_ENABLED', 'value': 'true'}, {'name': 'M2M_PROVIDER', 'value': 'keycloak'}])
+        self.assertEqual(container['environment'], [{'name': 'KAFKA_SSL_ENABLED', 'value': 'true'}])
         self.assertEqual(container['secrets'], [{'name': 'OTHER', 'valueFrom': '/other'}] + refs)
         self.assertEqual(container['image'], 'new')
         self.assertEqual(current['containerDefinitions'][0]['image'], 'old')
