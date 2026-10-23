@@ -197,9 +197,11 @@ forms API database login, so a dedicated restricted login is an optional later s
 ## Deployment
 
 See [deploy/README.md](deploy/README.md). CircleCI checks every branch and deploys
-`develop` → dev, `master` → production using `org-global` credentials and the same
-pinned Topcoder AWS credential helper as forms-api-v6. Each environment needs its
-existing ECS service/ECR repository, required SSM references and API migrations before deployment.
-The pipeline registers a new task revision and updates the existing service; it does not apply CloudFormation.
+`develop` → dev, `master` → production using `org-global` credentials and the shared
+`master_deploy.sh`, like the other v6 services: deploy settings come from
+`/config/forms-processor-v6/deployvar`, and every parameter under
+`/config/forms-processor-v6/appvar` and `/config/common/global-appvar` (appvar wins) is
+bound into the task. Each environment needs its existing ECS service/ECR repository, those
+parameters and the API migrations before deployment. The pipeline does not apply CloudFormation.
 
-Keycloak branch validation: lint/build/typecheck, all 31 unit tests, all eight PostgreSQL integration tests, ten offline deployment tests, and CloudFormation lint pass. With the `USE_KEYCLOAK` switch there are 37 unit tests and 11 offline deployment tests. The compiled provider issued/validated/cached a real DEV token with a stubbed Bus transport; no event was published. Existing deployment evidence files are historical.
+Keycloak branch validation: lint/build/typecheck, all 31 unit tests, all eight PostgreSQL integration tests, ten offline deployment tests, and CloudFormation lint pass. With the `USE_KEYCLOAK` switch there are 37 unit tests; the custom `release.py` and its offline tests were replaced by `master_deploy.sh` on 23 October. The compiled provider issued/validated/cached a real DEV token with a stubbed Bus transport; no event was published. Existing deployment evidence files are historical.

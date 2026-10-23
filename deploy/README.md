@@ -1,77 +1,50 @@
-> Keycloak migration branch only: do not run release.py or deploy this template before rollout approval. Releases reference each provider's settings that exist (Keycloak, Auth0 or both); `/config/common/global-appvar/USE_KEYCLOAK` selects which one the worker uses. Existing verification/status JSON files describe historical Auth0 deployments. No service is deployed by these source changes.
+> Keycloak migration branch only. `/config/common/global-appvar/USE_KEYCLOAK` selects Keycloak (`true`) or Auth0 (`false` or absent) M2M for the worker. Existing verification/status JSON files describe historical Auth0 deployments. No service is deployed by these source changes.
 
-# Deployment to existing ECS services
+# Deployment to the existing ECS service
 
-CircleCI checks all branches. After quality and deployment tests pass, `develop`
-releases to dev and `master` releases to production using `org-global` and the pinned
-Topcoder AWS credential helper. The deployment registers a new task revision and
-updates **forms-processor-v6** on **topcoder-infrastructure**. It does not create or
-update CloudFormation stacks, services, networking, IAM roles, topics or databases.
+CircleCI checks all branches. After the quality job passes, `develop` deploys to dev and
+`master` to production with `org-global`, exactly like the other v6 services: the pinned
+tc-deploy-scripts (v1.4.20, commit `5f3745c`) `master_deploy.sh`.
 
-The existing service and ECR repository must already exist. `release.py` clones
-registerable fields from the service's current task, preserving its roles, resource
-limits, sidecars and other runtime configuration. It replaces the processor image,
-managed SSM references and health check. Existing nonzero replica counts are kept;
-a service at zero is started at one. A service with an in-progress rollout is rejected.
-The script waits for healthy tasks of the requested revision and fails on rollback,
-failed rollout or timeout. It records current/previous task ARNs in a release artifact.
+```sh
+./psvar-processor.sh -t appenv -p /config/forms-processor-v6/deployvar
+source deployvar_env
+./master_deploy.sh -d ECS -e $DEPLOY_ENV -t latest \
+  -j /config/forms-processor-v6/appvar,/config/common/global-appvar -i forms-processor-v6 -p FARGATE
+```
 
-## Runtime parameter sources
+The script pushes the image to the `forms-processor-v6` ECR repository (tagged with the
+CircleCI build number), registers a new task definition and updates **forms-processor-v6**
+on **topcoder-infrastructure**. It runs the task with the shared `ecsTaskExecutionRole`,
+which can read the parameters below, and logs to `/aws/ecs/topcoder-infrastructure`.
+It does not create or update CloudFormation stacks, networking, IAM roles, topics or
+databases.
 
-Values are injected by ECS at task startup. The release script resolves the 21
-allowlisted candidate names using three `GetParameters` requests (at most ten names
-per request), with `WithDecryption=false`. It uses only names and types, discarding
-returned values, and never scans parameter prefixes with `DescribeParameters`.
-The SSM client uses standard exponential-backoff retries, capped at ten total
-attempts per request, including for manual releases. No account-wide throughput
-setting change is required. The task execution role must have `ssm:GetParameters` access to the selected
-parameters and `kms:Decrypt` when a customer-managed key is used.
+## Parameters
 
-| Settings | SSM source |
+Every parameter directly under `/config/forms-processor-v6/appvar` and
+`/config/common/global-appvar` becomes an ECS secret with the parameter's name; when both
+define a name, the appvar value wins. A new parameter is picked up by the next deploy;
+a changed value by the next task start (force a new deployment).
+
+| Path | Holds |
 | --- | --- |
-| `BUSAPI_URL` | `/config/forms-processor-v6/appvar/BUSAPI_URL` (required SecureString; prod `https://api.topcoder.com/v6`, dev `https://api.topcoder-dev.com/v6`) |
-| `LETS_TALK_RECIPIENTS` | `/config/forms-processor-v6/appvar/LETS_TALK_RECIPIENTS` (SecureString; comma-separated addresses) |
-| `LETS_TALK_SENDGRID_TEMPLATE_ID` | `/config/forms-processor-v6/appvar/LETS_TALK_SENDGRID_TEMPLATE_ID` (SecureString; active `d-` dynamic-template ID) |
-| `DATABASE_URL` | `/config/forms-api-v6/appvar/` |
-| `USE_KEYCLOAK` | `/config/common/global-appvar/USE_KEYCLOAK` (optional; `true` = Keycloak, `false` or absent = Auth0) |
-| `KEYCLOAK_ISSUER`, `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, optional `KEYCLOAK_SCOPE` | `/config/forms-processor-v6/keycloak-m2m/`; no fallback to Forms API or Auth0 credentials |
-| `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | `/config/forms-api-v6/appvar/` (as before the Keycloak migration) |
-| `AUTH0_URL`, `AUTH0_AUDIENCE`, optional `AUTH0_PROXY_SERVER_URL` | Forms API appvars when present, otherwise `/config/common/global-appvar/` |
-| `KAFKA_URL`, optional `KAFKA_SSL_ENABLED` | `/config/common/global-appvar/` |
+| `/config/forms-processor-v6/deployvar` | `AWS_ECS_CLUSTER`, `AWS_ECS_SERVICE`, `AWS_ECS_TASK_FAMILY`, `AWS_ECS_CONTAINER_NAME`, `AWS_REPOSITORY`, `AWS_ECS_FARGATE_CPU`/`MEMORY` (256/512), `AWS_ECS_CONTAINER_CPU`, `AWS_ECS_CONTAINER_MEMORY_RESERVATION`, `AWS_ECS_READONLY_ROOTFILESYSTEM`, `AWS_ECS_TASK_ROLE_ARN` (role name) and `AWS_ECS_CONTAINER_HEALTH_CMD` (`/health` on `PORT`, default 3000) |
+| `/config/forms-processor-v6/appvar` | `BUSAPI_URL`, `DATABASE_URL` (the Forms API database), `AUTH0_CLIENT_ID`/`AUTH0_CLIENT_SECRET` (the Forms API's Auth0 machine client, used when `USE_KEYCLOAK` is not true), `KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET` (`m2m-forms-processor-v6`), `KAFKA_GROUP_ID`, `KAFKA_FROM_BEGINNING`, `KAFKA_SSL_ENABLED`, `NODE_ENV`, and optional `LETS_TALK_RECIPIENTS`/`LETS_TALK_SENDGRID_TEMPLATE_ID` |
+| `/config/common/global-appvar` | Shared values, including `USE_KEYCLOAK`, `KEYCLOAK_ISSUER`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_TOKEN_URL`, `AUTH0_URL`, `AUTH0_AUDIENCE`, `AUTH0_PROXY_SERVER_URL` and `KAFKA_URL` |
 
-Only these named references are imported. The processor does not receive the API's
-migration URL or unrelated shared secrets. If global Kafka TLS is absent, the current
-task setting is preserved (runtime default false); ensure it matches the global broker
-listeners. There are no processor SendGrid credentials: email-service-v6 owns delivery.
+`DATABASE_URL` and the Auth0 client are copies of the Forms API values (the worker shares
+its database and machine identity); update both services when they rotate. The two
+Let's Talk parameters may be absent during initial deployment. Their absence produces
+empty runtime email settings; enabling the flow then defers email delivery with
+`invalid_email_settings`. Malformed nonempty values fail startup without exposing values.
+There are no processor SendGrid credentials: email-service-v6 owns delivery.
 
-The two email parameters may be absent during initial deployment. Their absence
-produces empty runtime email settings; enabling the flow then defers email delivery
-with `invalid_email_settings`. It never falls back to stale database recipients.
-Malformed nonempty values fail startup without exposing values. Create both parameters
-before the email release. **Redeploy after every parameter change** so new tasks read
-new values and newly created parameters are included in the task definition.
-
-The CI role needs ECR push/read, ECS describe/list/register/update, `ssm:GetParameters`
-on the candidate names above (including API/shared fallback names), and permission
-to pass the existing task roles. It does not need `ssm:DescribeParameters` or KMS
-decryption for this lookup. No CloudFormation permissions are
-needed. Accounts are guarded explicitly: dev `811668436784`, production `409275337247`.
-
-## CircleCI alignment
-
-Like forms-api-v6, email-service-v6 and bus-api-v6, the worker uses the Python
-deployment executor, remote Docker with `buildx --load`, the pinned Topcoder
-credential helper, `org-global`, and branch-filtered, serialized dev/prod releases.
-Credentials are obtained immediately before deployment and the temporary helper
-and credentials file are removed on success or failure. AWS CLI/SDK calls use
-standard retry mode with ten total attempts.
-
-The worker retains `release.py` for task registration instead of the shared
-`master_deploy.sh` template generator: it preserves the live task's execution role,
-resources and sidecars, and imports only the named API/shared parameters above.
-It still follows the same ECR push, new task-definition revision, existing-service
-update and health-verification sequence. It neither loads whole API/global appvar
-paths nor requires a new `/deployvar` configuration for the fixed service target.
+**Switching providers:** set `USE_KEYCLOAK` to `true` (Keycloak) or `false` (Auth0, the
+rollback) and force a new deployment so tasks re-read SSM. Both credential sets above stay
+in SSM, so no code, release or parameter-wiring change is needed. Production needs the
+same `deployvar` and appvar parameters (created in DEV on 23 October) before its first
+release from `master`.
 
 ## Release and enable Let's Talk
 
@@ -87,7 +60,7 @@ paths nor requires a new `/deployvar` configuration for the fixed service target
    [lets-talk-email.json](../examples/lets-talk-email.json) and the README variables.
 4. Merge reviewed changes to develop, then master. The repository must be connected
    to CircleCI with access to `org-global`. CircleCI builds the tested runtime image
-   and invokes `deploy/release.py production production-COMMIT-BUILD`.
+   and deploys it with `master_deploy.sh` (see above).
 5. Once healthy, inspect the pending-delivery query in the README. Enabling releases
    matching queued submissions as well as future ones. Run the reviewed update in
    [configure-lets-talk.sql](../examples/configure-lets-talk.sql) to enable the flow.
@@ -100,28 +73,13 @@ paths nor requires a new `/deployvar` configuration for the fixed service target
    SendGrid request and the designated recipients receive correctly filled emails.
    `deliveredAt` alone proves only Bus API acceptance, not inbox delivery.
 
-For a manual release of a reviewed image with temporary credentials:
-
-```sh
-docker build -t forms-processor-v6:candidate .
-python3 deploy/release.py production production-UNIQUE-RELEASE-ID
-```
-
-Rollback by updating the existing service to the prior task ARN recorded in the
-release artifact. Keep additive API migrations. Disable the flow first if recipient
-or template settings need correction; a send already in progress may finish.
+Rollback a bad image by updating the service to the previous task definition revision.
+Keep additive API migrations. Disable the flow first if recipient or template settings
+need correction; a send already in progress may finish.
 
 ## Historical CloudFormation bootstrap
 
-`service.yaml` and `parameters-dev.json` describe the original dev bootstrap, retained
-for reference. They are no longer applied by CI/CD. Subsequent infrastructure changes
-must preserve the live task reference and desired count: applying an old stack image
-or the old `release.py` procedure can revert a newer ECS release. The dev execution
-role from that bootstrap needs access to the new processor SSM paths before its first
-new release. Provision infrastructure separately if the production service is missing.
-
-The release builder references each provider's settings as a complete set: a set that is entirely absent is skipped (for example production before Keycloak is provisioned), a partial set or no complete set stops the release, and `USE_KEYCLOAK` is referenced when it exists. It removes stale literal copies of these names from the task environment and requires a SecureString Keycloak client secret. Provision the dedicated workload parameters and `write:bus_api` grant before rollout. No shared Auth0 parameter is modified.
-
-**Switching providers:** set `/config/common/global-appvar/USE_KEYCLOAK` to `true` (Keycloak) or `false` (Auth0, the rollback) and force a new deployment of the service so tasks re-read SSM; no release or code change is needed as long as both providers' settings existed at the last release. If one set was skipped, run a release after creating it. The CloudFormation template (used only to create the stack) references both sets, so both must exist when it is applied.
-
-An existing ECS execution role must be allowed to read the dedicated Keycloak SSM prefix, `/config/common/global-appvar/USE_KEYCLOAK` and the Auth0 parameters above (and decrypt their KMS key). `release.py` preserves role assignments; the branch template (`BusCredentialsPrefix` for Keycloak, `Auth0CredentialsPrefix` for Auth0) includes the required parameter paths. Prepare those permissions before releasing the branch.
+`service.yaml` and `parameters-dev.json` describe the original dev bootstrap, retained for
+reference; CI/CD does not apply them. `master_deploy.sh` owns the task definition, so
+applying the old stack template would revert the service to its bootstrap image and
+settings.

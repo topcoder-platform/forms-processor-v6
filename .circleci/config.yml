@@ -21,13 +21,6 @@ jobs:
             npm test
             npm run test:integration
             npm run build
-  deployment-checks:
-    docker:
-      - image: cimg/python:3.13.2
-    steps:
-      - checkout
-      - run: pip install boto3
-      - run: python3 -m unittest discover -s deploy/tests
   deploy:
     docker:
       - image: cimg/python:3.13.2-browsers
@@ -35,18 +28,9 @@ jobs:
       deploy_env:
         type: enum
         enum: [DEV, PROD]
-      environment:
-        type: enum
-        enum: [dev, production]
     environment:
-      AWS_REGION: us-east-1
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_STS_REGIONAL_ENDPOINTS: regional
-      AWS_RETRY_MODE: standard
-      AWS_MAX_ATTEMPTS: "10"
       APPNAME: forms-processor-v6
       DEPLOY_ENV: << parameters.deploy_env >>
-      DEPLOYMENT_ENVIRONMENT: << parameters.environment >>
     steps:
       - checkout
       - setup_remote_docker
@@ -55,40 +39,38 @@ jobs:
           command: |
             sudo apt-get update -qq
             sudo apt-get install -y -qq jq python3-pip
-            pip install boto3 awscli
+            sudo pip3 install awscli --upgrade
       - run:
-          name: Install the pinned Topcoder AWS credential helper
+          name: Install the pinned Topcoder deployment suite
           command: |
             git -c advice.detachedHead=false clone --quiet --depth 1 --branch v1.4.20 https://github.com/topcoder-platform/tc-deploy-scripts ../buildscript
             test "$(git -C ../buildscript rev-parse HEAD)" = 5f3745c35463ce0e2475c12269aa7a2b446456e5
-            cp ../buildscript/awsconfiguration.sh .
+            cp ../buildscript/master_deploy.sh ../buildscript/buildenv.sh ../buildscript/awsconfiguration.sh ../buildscript/psvar-processor.sh .
       - run:
           name: Build tested runtime image
-          command: docker buildx build --load --tag "${APPNAME}:candidate" .
+          command: docker buildx build --load --tag "${APPNAME}:latest" .
       - run:
-          name: Deploy a new task revision to the existing ECS service
+          name: Deploy with the shared master script
           no_output_timeout: 35m
           command: |
-            set -euo pipefail
-            set +x
-            trap 'rm -f awsenvconf awsconfiguration.sh' EXIT
-            ./awsconfiguration.sh "$DEPLOY_ENV" "$AWS_REGION"
+            # Same as the other v6 services: deploy settings come from /config/${APPNAME}/deployvar,
+            # and every parameter under /config/${APPNAME}/appvar and /config/common/global-appvar
+            # (appvar wins) is bound into the task as an ECS secret, including USE_KEYCLOAK.
+            ./awsconfiguration.sh $DEPLOY_ENV
             source awsenvconf
-            python3 -u deploy/release.py "$DEPLOYMENT_ENVIRONMENT" "${DEPLOYMENT_ENVIRONMENT}-${CIRCLE_SHA1}-${CIRCLE_BUILD_NUM}"
-      - store_artifacts:
-          path: deploy/release-<< parameters.environment >>.json
-          destination: release
+            ./psvar-processor.sh -t appenv -p /config/${APPNAME}/deployvar
+            source deployvar_env
+            ./master_deploy.sh -d ECS -e $DEPLOY_ENV -t latest -j /config/${APPNAME}/appvar,/config/common/global-appvar -i ${APPNAME} -p FARGATE
+
 workflows:
   build-and-deploy:
     jobs:
       - quality
-      - deployment-checks
       - deploy:
           name: deploy-dev
           context: org-global
-          requires: [quality, deployment-checks]
+          requires: [quality]
           deploy_env: DEV
-          environment: dev
           serial-group: << pipeline.project.slug >>/deploy-dev
           filters:
             branches:
@@ -96,9 +78,8 @@ workflows:
       - deploy:
           name: deploy-production
           context: org-global
-          requires: [quality, deployment-checks]
+          requires: [quality]
           deploy_env: PROD
-          environment: production
           serial-group: << pipeline.project.slug >>/deploy-production
           filters:
             branches:
