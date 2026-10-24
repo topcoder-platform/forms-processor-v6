@@ -34,6 +34,18 @@ def read_service(ecs):
     return service
 
 
+# Optional processor-owned settings for AI classification and label actions (docs/adr/0001).
+# Absent values defer the matching flows; the code defaults apply where documented.
+LABEL_ACTION_SETTINGS = [
+    'AI_API_URL', 'AI_AUTH0_AUDIENCE',
+    'LETS_TALK_CLASSIFY_MAX_ATTEMPTS', 'LETS_TALK_CLASSIFY_MAX_AGE_MINUTES',
+    'LETS_TALK_OPPORTUNITY_TEMPLATE_ID', 'LETS_TALK_SKILLS_TEMPLATE_ID',
+    'LETS_TALK_GENERAL_TEMPLATE_ID', 'LETS_TALK_WIPRO_TEMPLATE_ID',
+    'LETS_TALK_SALES_REPLY_TEMPLATE_ID', 'LETS_TALK_SUPPORT_TEMPLATE_ID',
+    'LETS_TALK_SUPPORT_RECIPIENTS', 'LETS_TALK_SALES_REPLY_TO', 'LETS_TALK_REPLY_CAP_PER_DAY',
+]
+
+
 def secret_references(ssm):
     """Resolve named SSM references in batches of ten, without decrypting SecureStrings.
 
@@ -52,7 +64,8 @@ def secret_references(ssm):
                'AUTH0_URL': ['api', 'common'], 'AUTH0_AUDIENCE': ['api', 'common'],
                'AUTH0_PROXY_SERVER_URL': ['api', 'common'],
                'KAFKA_URL': ['common'], 'KAFKA_SSL_ENABLED': ['common'],
-               'LETS_TALK_RECIPIENTS': ['app'], 'LETS_TALK_SENDGRID_TEMPLATE_ID': ['app']}
+               'LETS_TALK_RECIPIENTS': ['app'], 'LETS_TALK_SENDGRID_TEMPLATE_ID': ['app'],
+               **{name: ['app'] for name in LABEL_ACTION_SETTINGS}}
     names = [prefixes[source] + '/' + name
              for name, candidates in sources.items() for source in candidates]
     available = {}
@@ -60,7 +73,7 @@ def secret_references(ssm):
         response = ssm.get_parameters(Names=names[start:start + 10], WithDecryption=False)
         available.update({p['Name']: p['Type'] for p in response['Parameters']})
     optional = {'AUTH0_PROXY_SERVER_URL', 'KAFKA_SSL_ENABLED',
-                'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'}
+                'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID', *LABEL_ACTION_SETTINGS}
     references = []
     for name, candidates in sources.items():
         path = next((prefixes[source] + '/' + name for source in candidates
@@ -69,7 +82,8 @@ def secret_references(ssm):
             if name not in optional:
                 raise RuntimeError('Missing required SSM parameter: ' + name)
             continue
-        if name in ('BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'):
+        # Every processor-owned parameter (Bus URL, recipients, templates, AI settings) is a SecureString.
+        if path.startswith(prefixes['app'] + '/'):
             if available[path] != 'SecureString':
                 raise RuntimeError('SecureString required: ' + path)
         references.append({'name': name, 'valueFrom': path})
@@ -93,7 +107,7 @@ def task_request(ecs, current, image, references):
     container = containers[0]
     managed = {'DATABASE_URL', 'BUSAPI_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET',
                'AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL',
-               'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'}
+               'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID', *LABEL_ACTION_SETTINGS}
     # Preserve an existing TLS setting if the global store does not define it.
     managed.update(ref['name'] for ref in references)
     container['environment'] = [e for e in container.get('environment', []) if e['name'] not in managed]
