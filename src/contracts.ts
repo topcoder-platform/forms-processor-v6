@@ -38,6 +38,11 @@ export function parseEvent(value: Buffer | null | undefined): Submission {
   }
 }
 
+/** An AI classification label, as stored in forms."SubmissionClassification".label. */
+export const labelSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,39}$/);
+/** The label of a submission that was never classified, or whose classification failed. */
+export const UNKNOWN_LABEL = "UNKNOWN";
+
 export const rulesSchema = z
   .object({
     all: z
@@ -72,8 +77,25 @@ export const rulesSchema = z
         ]),
       )
       .default([]),
+    /** Stage-2 flows: routed only after classification, for these labels (ADR 0001). */
+    classification: z.array(labelSchema).min(1).optional(),
   })
   .strict();
+
+/** True for stage-2 flows, which wait for the submission's classification. Throws on invalid admin rules. */
+export function awaitsClassification(rules: unknown): boolean {
+  return rulesSchema.parse(rules).classification !== undefined;
+}
+
+/** True when a stage-2 flow lists the label and its answer predicates match. Throws on invalid admin rules. */
+export function matchesLabel(
+  rules: unknown,
+  event: Submission,
+  label: string,
+): boolean {
+  const parsed = rulesSchema.parse(rules);
+  return !!parsed.classification?.includes(label) && matches(parsed, event);
+}
 
 /** Match all configured answer predicates; empty rules match all. Throws on invalid admin rules. */
 export function matches(rules: unknown, event: Submission): boolean {

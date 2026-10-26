@@ -1,13 +1,20 @@
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
-import { BusEmail } from "./actions.js";
+import { BusEmail, type Action } from "./actions.js";
+import { AiApiClient } from "./ai.js";
 import { BusApiClient } from "./bus.js";
+import { ClassifyAction } from "./classify.js";
 import { config } from "./config.js";
 import { consume } from "./consumer.js";
+import {
+  LETS_TALK_SUBMITTER_FLOWS,
+  letsTalkFlowSettings,
+} from "./lets-talk-flows.js";
+import { LETS_TALK_ANSWERS } from "./lets-talk.js";
 import { Store, log } from "./store.js";
 
-/** Start the database inbox worker, Kafka consumer, and private health endpoint with environment-owned sales settings.
+/** Start the database inbox worker, Kafka consumer, and private health endpoint with environment-owned Let's talk settings.
  * Takes no arguments and resolves after shutdown; startup/configuration/database failures propagate to the fatal handler.
  */
 async function main(): Promise<void> {
@@ -22,23 +29,25 @@ async function main(): Promise<void> {
   pool.on("error", () => log("database_pool_error"));
   const store = new Store(
     pool,
-    new Map([
+    new Map<string, Action>([
       [
         "sendgrid-email",
         new BusEmail(
           settings.busApi ? new BusApiClient(settings.busApi) : undefined,
         ),
       ],
-    ]),
-    new Map([
       [
-        "lets-talk-sales-email",
-        {
-          recipients: settings.LETS_TALK_RECIPIENTS,
-          templateId: settings.LETS_TALK_SENDGRID_TEMPLATE_ID,
-        },
+        "ai-classify",
+        new ClassifyAction(
+          settings.aiApi ? new AiApiClient(settings.aiApi) : undefined,
+        ),
       ],
     ]),
+    letsTalkFlowSettings(settings),
+    {
+      submitterFlowIds: LETS_TALK_SUBMITTER_FLOWS,
+      submitterAddressAnswer: LETS_TALK_ANSWERS.email,
+    },
   );
   await store.ready();
   const shutdown = new AbortController();
