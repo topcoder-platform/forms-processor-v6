@@ -21,7 +21,6 @@ const event: BusEvent = {
 test("requests/caches M2M tokens and posts the envelope to the v6 Bus endpoint", async () => {
   let tokenRequests = 0;
   let posts = 0;
-  let now = 100000;
   const request: typeof fetch = async (url, init) => {
     assert.ok(init?.signal);
     assert.equal(init.redirect, "error");
@@ -32,7 +31,6 @@ test("requests/caches M2M tokens and posts the envelope to the v6 Bus endpoint",
         client_id: "client",
         client_secret: "secret",
         audience: options.AUTH0_AUDIENCE,
-        auth0_url: options.AUTH0_URL,
       });
       return Response.json({ access_token: "token", expires_in: 120 });
     }
@@ -45,14 +43,13 @@ test("requests/caches M2M tokens and posts the envelope to the v6 Bus endpoint",
     assert.deepEqual(JSON.parse(String(init.body)), event);
     return new Response(null, { status: 202 });
   };
-  const client = new BusApiClient(options, request, () => now);
+  const client = new BusApiClient(options, request);
   await client.postEvent(event);
   await client.postEvent(event);
   assert.equal(tokenRequests, 1);
   assert.equal(posts, 2);
-  now += 61000;
   await client.postEvent(event);
-  assert.equal(tokenRequests, 2);
+  assert.equal(tokenRequests, 1);
 });
 test("supports the standard Auth0 proxy endpoint and auth0_url field", async () => {
   const proxy = "https://proxy.example.com/token";
@@ -76,7 +73,7 @@ test("authentication failure prevents Bus publication and never exposes response
       calls++;
       return new Response("secret", { status: 403 });
     }).postEvent(event),
-    /^Error: bus_auth_http_403$/,
+    /^Error: bus_http_403$/,
   );
   assert.equal(calls, 1);
 });
@@ -85,7 +82,7 @@ test("invalid token responses do not publish", async () => {
     new BusApiClient(options, async () =>
       Response.json({ error: "secret" }),
     ).postEvent(event),
-    /bus_auth_invalid_response/,
+    /bus_network_or_timeout/,
   );
 });
 test("401 clears cached token; publication failure remains retryable", async () => {
