@@ -1,6 +1,6 @@
 # Let's talk email templates
 
-SendGrid dynamic templates for replies to Let's talk submitters. Which email a submitter gets depends on the label the AI classification assigns. See [ADR 0001](../adr/0001-lets-talk-ai-classification-and-label-actions.md) and the [plan](../plans/lets-talk-ai-classification.md). Designs: [Figma / Emails](https://www.figma.com/design/ELqqR1RvX3BhFuU3AI8ShI/Emails?node-id=2849-438).
+SendGrid dynamic templates for replies to Let's talk submitters, and for the internal support forward. Which email a submitter gets depends on the label the AI classification assigns. See [ADR 0001](../adr/0001-lets-talk-ai-classification-and-label-actions.md) and the [plan](../plans/lets-talk-ai-classification.md). Designs: [Figma / Emails](https://www.figma.com/design/ELqqR1RvX3BhFuU3AI8ShI/Emails?node-id=2849-438).
 
 ## Which template each label sends
 
@@ -11,16 +11,17 @@ SendGrid dynamic templates for replies to Let's talk submitters. Which email a s
 | `COMMUNITY_GENERAL` (no defined direction) | [`lets-talk-community-general-reply.html`](lets-talk-community-general-reply.html) | `lets-talk-community-general-reply` | `LETS_TALK_GENERAL_TEMPLATE_ID` | Welcome to Topcoder | [2849:996](https://www.figma.com/design/ELqqR1RvX3BhFuU3AI8ShI/Emails?node-id=2849-996) |
 | `WIPRO_QUERIES` (Wipro employees, Wipro-internal) | [`lets-talk-how-crowdsourcing-works.html`](lets-talk-how-crowdsourcing-works.html) | `lets-talk-wipro-queries-reply` | `LETS_TALK_WIPRO_TEMPLATE_ID` | How crowdsourcing works at Topcoder | [2853:1572](https://www.figma.com/design/ELqqR1RvX3BhFuU3AI8ShI/Emails?node-id=2853-1572) |
 | `SALES_LEAD` | [`lets-talk-sales-reply.html`](lets-talk-sales-reply.html) | `lets-talk-sales-reply` | `LETS_TALK_SALES_REPLY_TEMPLATE_ID` | Thank you for your interest in Topcoder | — (no design; uses the shared shell) |
+| `COMMUNITY_SUPPORT` (internal, to support) | [`lets-talk-support-forward.html`](lets-talk-support-forward.html) | `lets-talk-support-forward` | `LETS_TALK_SUPPORT_TEMPLATE_ID` | Let's talk support request | — (no design; uses the shared shell) |
 
 The other labels send no reply to the submitter:
 
 - `JUNK`: nothing is sent.
-- `COMMUNITY_SUPPORT`: the submission is forwarded internally to `support@topcoder.com` (template `LETS_TALK_SUPPORT_TEMPLATE_ID`, not part of this folder).
+- `COMMUNITY_SUPPORT`: the submission is forwarded internally to `LETS_TALK_SUPPORT_RECIPIENTS` (default `support@topcoder.com`) with the support forward above. Its reply-to is the submitter, so support answers them by replying.
 - `UNKNOWN` (classification failed): the existing internal Let's talk email to `LETS_TALK_RECIPIENTS`.
 
 ## Dynamic template data
 
-All five templates take `firstName` and `viewInBrowserUrl`; the sales reply also uses `interestArea`:
+All five reply templates take `firstName` and `viewInBrowserUrl`; the sales reply also uses `interestArea`:
 
 | Variable | Set by the processor | Notes |
 | --- | --- | --- |
@@ -31,6 +32,20 @@ All five templates take `firstName` and `viewInBrowserUrl`; the sales reply also
 **The processor sends nothing else to any reply template.** No message, company, email address, URL or classification is ever part of the data (ADR 0001, Decision 5). A template that refers to any other variable renders it empty, so **don't add variables without changing the processor first**. This is what keeps the public form from being used to send attacker-written text from Topcoder's domain.
 
 Use the double-brace form `{{firstName}}`, which SendGrid HTML-escapes. Never use triple braces `{{{…}}}`.
+
+### Support forward data
+
+The support forward goes to Topcoder staff, not to the submitter, so it gets the full submission (see the [processor README](../../README.md) and [examples/lets-talk-email.json](../../examples/lets-talk-email.json)):
+
+| Variable | Notes |
+| --- | --- |
+| `answers.firstname`, `answers.lastname`, `answers.email`, `answers.company`, `answers.briefly_describe_your_inquiry` | As submitted. The inquiry keeps its line breaks (`white-space:pre-wrap`). |
+| `answers.interested_in` | The option key (`crowdsourcing`, …). The template maps the three known keys to their display labels with `{{#equals}}`, and shows any other key as it is. |
+| `fields` | Every answer as `{key, value}` strings, shown under "All answers". |
+| `submissionId`, `submittedAt`, `sourcePage` | Submission metadata. |
+| `classification` | `label`, `confidence`, `needsReview`, `rationale`, `workflowRunId`. The section is hidden when it's missing. |
+
+All of these except the metadata and classification are attacker-controllable text, so the same rule applies: double braces only, and keep the subject fixed (don't put submitted values in it).
 
 ## Setting up a template in SendGrid
 
@@ -43,6 +58,12 @@ Do this for each template, in each environment (dev and production):
 
    ```json
    { "firstName": "Alex", "interestArea": "Crowdsourced Innovation" }
+   ```
+
+   For the support forward, use `payload.data` from [examples/lets-talk-email.json](../../examples/lets-talk-email.json), with a `classification` added:
+
+   ```json
+   "classification": { "label": "COMMUNITY_SUPPORT", "status": "CLASSIFIED", "confidence": 0.8, "needsReview": false, "rationale": "Payment not received.", "workflowRunId": "6f1c2a9e-6b7d-4e8f-9a01-2b3c4d5e6f70" }
    ```
 
 5. Send a test email to yourself from the editor and check it in at least Gmail and Outlook, on desktop and mobile.
@@ -58,11 +79,11 @@ A flow whose template id is missing doesn't send. Its deliveries wait and retry 
 
 The template id doesn't change, so no SSM change or redeploy is needed. Keep the previous version, so you can switch back to it if needed.
 
-**The five files share the same header, footer and mobile styles.** Only the content card, `<title>` and preheader differ. A change to the shared shell (logo, footer, social links, styles) must be made in all five files and published as a new version of all five templates.
+**All the templates in this folder share the same header, footer and mobile styles.** Only the content card, `<title>` and preheader differ (the support forward also adds two mobile rules for its label/value tables). A change to the shared shell (logo, footer, social links, styles) must be made in every file and published as a new version of every template.
 
 ## Images
 
-The logo and social icons are hosted on the SendGrid CDN. Their URLs are in [assets/icons.txt](assets/icons.txt) and are already used, over `https`, in the HTML. [assets/](assets/) keeps the source PNGs: 2x exports from Figma, displayed at 204×48 (logo) and 32×32 (icons). To replace an image, upload it to the SendGrid Design Library, then update its URL in `icons.txt` and in all five HTML files.
+The logo and social icons are hosted on the SendGrid CDN. Their URLs are in [assets/icons.txt](assets/icons.txt) and are already used, over `https`, in the HTML. [assets/](assets/) keeps the source PNGs: 2x exports from Figma, displayed at 204×48 (logo) and 32×32 (icons). To replace an image, upload it to the SendGrid Design Library, then update its URL in `icons.txt` and in every HTML file.
 
 ## To confirm before going live
 
