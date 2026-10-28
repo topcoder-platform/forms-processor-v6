@@ -4,4 +4,5 @@ dist
 .env
 .env.*
 awsenvconf
+awsconfiguration.sh
 __pycache__

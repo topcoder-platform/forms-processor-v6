@@ -42,28 +42,39 @@ jobs:
       AWS_REGION: us-east-1
       AWS_DEFAULT_REGION: us-east-1
       AWS_STS_REGIONAL_ENDPOINTS: regional
+      AWS_RETRY_MODE: standard
+      AWS_MAX_ATTEMPTS: "10"
       APPNAME: forms-processor-v6
+      DEPLOY_ENV: << parameters.deploy_env >>
+      DEPLOYMENT_ENVIRONMENT: << parameters.environment >>
     steps:
       - checkout
       - setup_remote_docker
       - run:
           name: Install deployment dependencies
-          command: pip install boto3 awscli
+          command: |
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq jq python3-pip
+            pip install boto3 awscli
+      - run:
+          name: Install the pinned Topcoder AWS credential helper
+          command: |
+            git -c advice.detachedHead=false clone --quiet --depth 1 --branch v1.4.20 https://github.com/topcoder-platform/tc-deploy-scripts ../buildscript
+            test "$(git -C ../buildscript rev-parse HEAD)" = 5f3745c35463ce0e2475c12269aa7a2b446456e5
+            cp ../buildscript/awsconfiguration.sh .
       - run:
           name: Build tested runtime image
-          command: docker build --tag forms-processor-v6:candidate .
+          command: docker buildx build --load --tag "${APPNAME}:candidate" .
       - run:
           name: Deploy a new task revision to the existing ECS service
           no_output_timeout: 35m
           command: |
-            git clone --quiet --depth 1 --branch v1.4.20 https://github.com/topcoder-platform/tc-deploy-scripts ../buildscript
-            test "$(git -C ../buildscript rev-parse HEAD)" = 5f3745c35463ce0e2475c12269aa7a2b446456e5
-            cp ../buildscript/awsconfiguration.sh .
-            ./awsconfiguration.sh << parameters.deploy_env >>
+            set -euo pipefail
             set +x
+            trap 'rm -f awsenvconf awsconfiguration.sh' EXIT
+            ./awsconfiguration.sh "$DEPLOY_ENV" "$AWS_REGION"
             source awsenvconf
-            rm -f awsenvconf awsconfiguration.sh
-            python3 -u deploy/release.py << parameters.environment >> "<< parameters.environment >>-${CIRCLE_SHA1}-${CIRCLE_BUILD_NUM}"
+            python3 -u deploy/release.py "$DEPLOYMENT_ENVIRONMENT" "${DEPLOYMENT_ENVIRONMENT}-${CIRCLE_SHA1}-${CIRCLE_BUILD_NUM}"
       - store_artifacts:
           path: deploy/release-<< parameters.environment >>.json
           destination: release
@@ -82,6 +93,8 @@ workflows:
           filters:
             branches:
               only: develop
+            tags:
+                only: /^dev-.*/
       - deploy:
           name: deploy-production
           context: org-global

@@ -1,11 +1,14 @@
 """Exercise rollout guards and secret-reference selection without contacting AWS."""
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 import boto3
+from botocore.awsrequest import AWSResponse
+from botocore.exceptions import ClientError
 
 spec = importlib.util.spec_from_file_location('release', Path(__file__).parents[1] / 'release.py')
 release = importlib.util.module_from_spec(spec)
@@ -14,6 +17,33 @@ spec.loader.exec_module(release)
 
 class ReleaseTests(unittest.TestCase):
     """Verify that releases update existing ECS tasks and cannot cross environment boundaries."""
+
+    def setUp(self):
+        """Build named-parameter fixtures for each test; takes no arguments and returns nothing."""
+        entries = {
+            '/config/forms-api-v6/appvar': ['DATABASE_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'AUTH0_URL'],
+            '/config/forms-processor-v6/appvar': ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID',
+                                                  *release.LABEL_ACTION_SETTINGS],
+            '/config/common/global-appvar': ['AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL', 'KAFKA_SSL_ENABLED'],
+        }
+        self.parameters = {
+            path + '/' + name: {'Name': path + '/' + name, 'Type': 'SecureString', 'Value': 'unused-ciphertext'}
+            for path, names in entries.items() for name in names
+        }
+        self.ssm = Mock()
+        self.ssm.get_parameters.side_effect = self.parameter_response
+
+    def parameter_response(self, *, Names, WithDecryption):
+        """Return the requested fixture parameters and absent names; rejects oversized/decrypting reads.
+
+        Called by the SSM mock with AWS request arguments. Reverses result order to
+        verify lookup by name, and raises AssertionError for unsafe request options.
+        """
+        self.assertFalse(WithDecryption)
+        self.assertGreater(len(Names), 0)
+        self.assertLessEqual(len(Names), 10)
+        return {'Parameters': [self.parameters[name] for name in reversed(Names) if name in self.parameters],
+                'InvalidParameters': [name for name in Names if name not in self.parameters]}
 
     def test_missing_service_is_rejected(self):
         """A missing service raises before release can provision anything; no inputs or return value."""
@@ -24,29 +54,111 @@ class ReleaseTests(unittest.TestCase):
         ecs.update_service.assert_not_called()
 
     def test_secret_sources_and_types(self):
-        """Select API identity, global Kafka and processor Bus/email SecureStrings; rejects invalid metadata."""
-        entries = {
-            '/config/forms-api-v6/appvar': ['DATABASE_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'AUTH0_URL'],
-            '/config/forms-processor-v6/appvar': ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'],
-            '/config/common/global-appvar': ['AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL', 'KAFKA_SSL_ENABLED'],
-        }
-        ssm = Mock()
-        pages = [[{'Parameters': [{'Name': path + '/' + name, 'Type': 'SecureString'} for name in names]}]
-                 for path, names in entries.items()]
-        ssm.get_paginator.return_value.paginate.side_effect = pages
-        refs = {r['name']: r['valueFrom'] for r in release.secret_references(ssm)}
+        """Two bounded non-decrypting reads return only named references with the intended precedence."""
+        refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
         self.assertEqual(refs['AUTH0_URL'], '/config/forms-api-v6/appvar/AUTH0_URL')
+        self.assertEqual(refs['AUTH0_AUDIENCE'], '/config/common/global-appvar/AUTH0_AUDIENCE')
+        self.assertEqual(refs['DATABASE_URL'], '/config/forms-api-v6/appvar/DATABASE_URL')
         self.assertEqual(refs['KAFKA_URL'], '/config/common/global-appvar/KAFKA_URL')
         self.assertEqual(refs['BUSAPI_URL'], '/config/forms-processor-v6/appvar/BUSAPI_URL')
-        self.assertEqual(len(refs), 11)
-        ssm.get_parameter.assert_not_called()
-        pages[1][0]['Parameters'][0]['Type'] = 'String'
-        ssm.get_paginator.return_value.paginate.side_effect = pages
-        with self.assertRaisesRegex(RuntimeError, 'SecureString'):
-            release.secret_references(ssm)
-        ssm.get_paginator.return_value.paginate.side_effect = [[{'Parameters': []}]] * 3
+        self.assertEqual(len(refs), 11 + len(release.LABEL_ACTION_SETTINGS))
+        self.assertNotIn('unused-ciphertext', json.dumps(refs))
+        requested = [name for call in self.ssm.get_parameters.call_args_list for name in call.kwargs['Names']]
+        expected = 14 + len(release.LABEL_ACTION_SETTINGS)
+        self.assertEqual(self.ssm.get_parameters.call_count, -(-expected // 10))
+        self.assertEqual(len(requested), expected)
+        self.assertEqual(len(set(requested)), expected)
+        self.assertEqual(refs['AI_API_URL'], '/config/forms-processor-v6/appvar/AI_API_URL')
+        self.assertNotIn('/config/forms-api-v6/appvar/MIGRATION_DATABASE_URL', requested)
+        self.ssm.get_paginator.assert_not_called()
+        self.ssm.describe_parameters.assert_not_called()
+
+    def test_optional_parameters_and_auth_fallback(self):
+        """Missing optional settings are omitted and absent API Auth0 settings use shared defaults."""
+        del self.parameters['/config/forms-api-v6/appvar/AUTH0_URL']
+        for name in ['LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID', *release.LABEL_ACTION_SETTINGS]:
+            del self.parameters['/config/forms-processor-v6/appvar/' + name]
+        for name in ['KAFKA_SSL_ENABLED', 'AUTH0_PROXY_SERVER_URL']:
+            del self.parameters['/config/common/global-appvar/' + name]
+        refs = {r['name']: r['valueFrom'] for r in release.secret_references(self.ssm)}
+        self.assertEqual(refs['AUTH0_URL'], '/config/common/global-appvar/AUTH0_URL')
+        self.assertEqual(len(refs), 7)
+
+    def test_required_parameter_missing_fails(self):
+        """A missing required database reference raises instead of publishing a broken task."""
+        del self.parameters['/config/forms-api-v6/appvar/DATABASE_URL']
         with self.assertRaisesRegex(RuntimeError, 'Missing required'):
-            release.secret_references(ssm)
+            release.secret_references(self.ssm)
+
+    def test_sales_parameters_must_remain_secure_strings(self):
+        """Wrong types for each required Bus or optional sales value raise without exposing its value."""
+        for name in ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID',
+                     'AI_API_URL', 'LETS_TALK_SALES_REPLY_TO']:
+            parameter = self.parameters['/config/forms-processor-v6/appvar/' + name]
+            with self.subTest(name=name):
+                parameter['Type'] = 'String'
+                with self.assertRaisesRegex(RuntimeError, 'SecureString') as raised:
+                    release.secret_references(self.ssm)
+                self.assertNotIn('unused-ciphertext', str(raised.exception))
+                parameter['Type'] = 'SecureString'
+
+    def test_ssm_failures_stop_before_deployment(self):
+        """Access denial and exhausted throttling propagate before any ECR, Docker or ECS mutation."""
+        for code in ['AccessDeniedException', 'ThrottlingException']:
+            with self.subTest(code=code):
+                session, ecs, ecr = Mock(), Mock(), Mock()
+                sts = Mock()
+                sts.get_caller_identity.return_value = {'Account': release.ACCOUNTS['production']}
+                session.client.side_effect = lambda name, **kwargs: {
+                    'sts': sts, 'ecs': ecs, 'ecr': ecr, 'ssm': self.ssm}[name]
+                ecs.describe_services.return_value = {'services': [{
+                    'status': 'ACTIVE', 'taskDefinition': 'current',
+                    'deployments': [{'rolloutState': 'COMPLETED'}]}]}
+                ecs.describe_task_definition.return_value = {'taskDefinition': {'family': release.APP}}
+                self.ssm.get_parameters.side_effect = ClientError({'Error': {
+                    'Code': code, 'Message': 'Parameter read failed'}}, 'GetParameters')
+                with patch.object(release.boto3, 'Session', return_value=session), \
+                        patch.object(release.sys, 'argv', ['release.py', 'production', 'candidate']), \
+                        patch.object(release.subprocess, 'run') as run:
+                    with self.assertRaises(ClientError):
+                        release.main()
+                session.client.assert_any_call('ssm', config=release.SSM_CLIENT_CONFIG)
+                ecr.describe_repositories.assert_not_called()
+                ecs.register_task_definition.assert_not_called()
+                ecs.update_service.assert_not_called()
+                run.assert_not_called()
+
+    def test_sdk_retries_throttling_and_has_a_finite_budget(self):
+        """Exercise real SDK retry handling offline: recover after five throttles and stop after ten attempts."""
+        # GetParameters reads ten names per request.
+        batches = -(-(14 + len(release.LABEL_ACTION_SETTINGS)) // 10)
+        for throttle_count, expected_requests in [(5, 5 + batches), (100, 10)]:
+            with self.subTest(throttle_count=throttle_count):
+                ssm = boto3.client('ssm', region_name='us-east-1', aws_access_key_id='test',
+                                   aws_secret_access_key='test', config=release.SSM_CLIENT_CONFIG)
+                requests = []
+
+                def respond(request):
+                    """Return an AWSResponse for a prepared HTTP request; fake throttles precede fixture reads."""
+                    requests.append(json.loads(request.body))
+                    self.assertEqual(request.headers['X-Amz-Target'], b'AmazonSSM.GetParameters')
+                    throttled = len(requests) <= throttle_count
+                    body = {'__type': 'ThrottlingException', 'message': 'Rate exceeded'} if throttled \
+                        else self.parameter_response(**requests[-1])
+                    raw = SimpleNamespace(stream=lambda: iter([json.dumps(body).encode()]))
+                    return AWSResponse(request.url, 400 if throttled else 200,
+                                       {'content-type': 'application/x-amz-json-1.1'}, raw)
+
+                with patch.object(ssm._endpoint.http_session, 'send', side_effect=respond), \
+                        patch('botocore.endpoint.time.sleep'):
+                    if throttle_count == 5:
+                        self.assertEqual(len(release.secret_references(ssm)), 11 + len(release.LABEL_ACTION_SETTINGS))
+                    else:
+                        with self.assertRaises(ClientError):
+                            release.secret_references(ssm)
+                self.assertEqual(len(requests), expected_requests)
+                self.assertTrue(all(not request['WithDecryption'] for request in requests))
+                ssm.close()
 
     def test_clone_preserves_roles_resources_and_removes_stale_literals(self):
         """Cloning returns a registerable copy with exact secret overrides and unchanged sidecars/roles."""

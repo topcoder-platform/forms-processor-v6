@@ -15,10 +15,12 @@ import sys
 import time
 
 import boto3
+from botocore.config import Config
 
 APP = 'forms-processor-v6'
 CLUSTER = 'topcoder-infrastructure'
 ACCOUNTS = {'dev': '811668436784', 'production': '409275337247'}
+SSM_CLIENT_CONFIG = Config(retries={'mode': 'standard', 'total_max_attempts': 10})
 
 
 def read_service(ecs):
@@ -32,30 +34,46 @@ def read_service(ecs):
     return service
 
 
+# Optional processor-owned settings for AI classification and label actions (docs/adr/0001).
+# Absent values defer the matching flows; the code defaults apply where documented.
+LABEL_ACTION_SETTINGS = [
+    'AI_API_URL', 'AI_AUTH0_AUDIENCE',
+    'LETS_TALK_CLASSIFY_MAX_ATTEMPTS', 'LETS_TALK_CLASSIFY_MAX_AGE_MINUTES',
+    'LETS_TALK_OPPORTUNITY_TEMPLATE_ID', 'LETS_TALK_SKILLS_TEMPLATE_ID',
+    'LETS_TALK_GENERAL_TEMPLATE_ID', 'LETS_TALK_WIPRO_TEMPLATE_ID',
+    'LETS_TALK_SALES_REPLY_TEMPLATE_ID', 'LETS_TALK_SUPPORT_TEMPLATE_ID',
+    'LETS_TALK_SUPPORT_RECIPIENTS', 'LETS_TALK_SALES_REPLY_TO', 'LETS_TALK_REPLY_CAP_PER_DAY',
+]
+
+
 def secret_references(ssm):
-    """Resolve allowlisted SSM names for ECS injection, without decrypting any values.
+    """Resolve named SSM references in batches of ten, without decrypting SecureStrings.
 
     Takes an SSM client; returns name/valueFrom pairs. API Auth0 settings take
     precedence over shared defaults. Kafka uses globals. Missing optional sales
     settings permit a disabled-flow deployment. Raises for absent required values
-    or sales/Bus parameters that are not SecureStrings; AWS errors propagate.
+    or sales/Bus parameters that are not SecureStrings; AWS errors propagate after
+    client retries. GetParameters values are discarded; only names/types are used.
+    Avoids the low-throughput DescribeParameters scan of whole parameter prefixes.
     """
     prefixes = {'api': '/config/forms-api-v6/appvar',
                 'app': f'/config/{APP}/appvar',
                 'common': '/config/common/global-appvar'}
-    available = {}
-    for prefix in prefixes.values():
-        for page in ssm.get_paginator('describe_parameters').paginate(
-                ParameterFilters=[{'Key': 'Name', 'Option': 'BeginsWith', 'Values': [prefix + '/']}]):
-            available.update({p['Name']: p['Type'] for p in page['Parameters']})
     sources = {'DATABASE_URL': ['api'], 'BUSAPI_URL': ['app'],
                'AUTH0_CLIENT_ID': ['api'], 'AUTH0_CLIENT_SECRET': ['api'],
                'AUTH0_URL': ['api', 'common'], 'AUTH0_AUDIENCE': ['api', 'common'],
                'AUTH0_PROXY_SERVER_URL': ['api', 'common'],
                'KAFKA_URL': ['common'], 'KAFKA_SSL_ENABLED': ['common'],
-               'LETS_TALK_RECIPIENTS': ['app'], 'LETS_TALK_SENDGRID_TEMPLATE_ID': ['app']}
+               'LETS_TALK_RECIPIENTS': ['app'], 'LETS_TALK_SENDGRID_TEMPLATE_ID': ['app'],
+               **{name: ['app'] for name in LABEL_ACTION_SETTINGS}}
+    names = [prefixes[source] + '/' + name
+             for name, candidates in sources.items() for source in candidates]
+    available = {}
+    for start in range(0, len(names), 10):
+        response = ssm.get_parameters(Names=names[start:start + 10], WithDecryption=False)
+        available.update({p['Name']: p['Type'] for p in response['Parameters']})
     optional = {'AUTH0_PROXY_SERVER_URL', 'KAFKA_SSL_ENABLED',
-                'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'}
+                'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID', *LABEL_ACTION_SETTINGS}
     references = []
     for name, candidates in sources.items():
         path = next((prefixes[source] + '/' + name for source in candidates
@@ -64,7 +82,8 @@ def secret_references(ssm):
             if name not in optional:
                 raise RuntimeError('Missing required SSM parameter: ' + name)
             continue
-        if name in ('BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'):
+        # Every processor-owned parameter (Bus URL, recipients, templates, AI settings) is a SecureString.
+        if path.startswith(prefixes['app'] + '/'):
             if available[path] != 'SecureString':
                 raise RuntimeError('SecureString required: ' + path)
         references.append({'name': name, 'valueFrom': path})
@@ -88,7 +107,7 @@ def task_request(ecs, current, image, references):
     container = containers[0]
     managed = {'DATABASE_URL', 'BUSAPI_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET',
                'AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL',
-               'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'}
+               'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID', *LABEL_ACTION_SETTINGS}
     # Preserve an existing TLS setting if the global store does not define it.
     managed.update(ref['name'] for ref in references)
     container['environment'] = [e for e in container.get('environment', []) if e['name'] not in managed]
@@ -147,7 +166,8 @@ def main():
     account = session.client('sts').get_caller_identity()['Account']
     if account != ACCOUNTS[environment]:
         raise RuntimeError('AWS account does not match requested environment')
-    ecs, ecr, ssm = [session.client(name) for name in ('ecs', 'ecr', 'ssm')]
+    ecs, ecr = [session.client(name) for name in ('ecs', 'ecr')]
+    ssm = session.client('ssm', config=SSM_CLIENT_CONFIG)
     service = read_service(ecs)
     if len(service['deployments']) != 1 or service['deployments'][0].get('rolloutState') != 'COMPLETED':
         raise RuntimeError('Existing ECS deployment must be stable before releasing')
