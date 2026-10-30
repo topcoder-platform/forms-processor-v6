@@ -22,7 +22,8 @@ class ReleaseTests(unittest.TestCase):
         """Build named-parameter fixtures for each test; takes no arguments and returns nothing."""
         entries = {
             '/config/forms-api-v6/appvar': ['DATABASE_URL', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'AUTH0_URL'],
-            '/config/forms-processor-v6/appvar': ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID'],
+            '/config/forms-processor-v6/appvar': ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID',
+                                                  *release.LABEL_ACTION_SETTINGS],
             '/config/common/global-appvar': ['AUTH0_URL', 'AUTH0_AUDIENCE', 'AUTH0_PROXY_SERVER_URL', 'KAFKA_URL', 'KAFKA_SSL_ENABLED'],
         }
         self.parameters = {
@@ -60,12 +61,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(refs['DATABASE_URL'], '/config/forms-api-v6/appvar/DATABASE_URL')
         self.assertEqual(refs['KAFKA_URL'], '/config/common/global-appvar/KAFKA_URL')
         self.assertEqual(refs['BUSAPI_URL'], '/config/forms-processor-v6/appvar/BUSAPI_URL')
-        self.assertEqual(len(refs), 11)
+        self.assertEqual(len(refs), 11 + len(release.LABEL_ACTION_SETTINGS))
         self.assertNotIn('unused-ciphertext', json.dumps(refs))
-        self.assertEqual(self.ssm.get_parameters.call_count, 2)
         requested = [name for call in self.ssm.get_parameters.call_args_list for name in call.kwargs['Names']]
-        self.assertEqual(len(requested), 14)
-        self.assertEqual(len(set(requested)), 14)
+        expected = 14 + len(release.LABEL_ACTION_SETTINGS)
+        self.assertEqual(self.ssm.get_parameters.call_count, -(-expected // 10))
+        self.assertEqual(len(requested), expected)
+        self.assertEqual(len(set(requested)), expected)
+        self.assertEqual(refs['AI_API_URL'], '/config/forms-processor-v6/appvar/AI_API_URL')
         self.assertNotIn('/config/forms-api-v6/appvar/MIGRATION_DATABASE_URL', requested)
         self.ssm.get_paginator.assert_not_called()
         self.ssm.describe_parameters.assert_not_called()
@@ -73,7 +76,7 @@ class ReleaseTests(unittest.TestCase):
     def test_optional_parameters_and_auth_fallback(self):
         """Missing optional settings are omitted and absent API Auth0 settings use shared defaults."""
         del self.parameters['/config/forms-api-v6/appvar/AUTH0_URL']
-        for name in ['LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID']:
+        for name in ['LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID', *release.LABEL_ACTION_SETTINGS]:
             del self.parameters['/config/forms-processor-v6/appvar/' + name]
         for name in ['KAFKA_SSL_ENABLED', 'AUTH0_PROXY_SERVER_URL']:
             del self.parameters['/config/common/global-appvar/' + name]
@@ -89,7 +92,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_sales_parameters_must_remain_secure_strings(self):
         """Wrong types for each required Bus or optional sales value raise without exposing its value."""
-        for name in ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID']:
+        for name in ['BUSAPI_URL', 'LETS_TALK_RECIPIENTS', 'LETS_TALK_SENDGRID_TEMPLATE_ID',
+                     'AI_API_URL', 'LETS_TALK_SALES_REPLY_TO']:
             parameter = self.parameters['/config/forms-processor-v6/appvar/' + name]
             with self.subTest(name=name):
                 parameter['Type'] = 'String'
@@ -126,7 +130,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_sdk_retries_throttling_and_has_a_finite_budget(self):
         """Exercise real SDK retry handling offline: recover after five throttles and stop after ten attempts."""
-        for throttle_count, expected_requests in [(5, 7), (100, 10)]:
+        # GetParameters reads ten names per request.
+        batches = -(-(14 + len(release.LABEL_ACTION_SETTINGS)) // 10)
+        for throttle_count, expected_requests in [(5, 5 + batches), (100, 10)]:
             with self.subTest(throttle_count=throttle_count):
                 ssm = boto3.client('ssm', region_name='us-east-1', aws_access_key_id='test',
                                    aws_secret_access_key='test', config=release.SSM_CLIENT_CONFIG)
@@ -146,7 +152,7 @@ class ReleaseTests(unittest.TestCase):
                 with patch.object(ssm._endpoint.http_session, 'send', side_effect=respond), \
                         patch('botocore.endpoint.time.sleep'):
                     if throttle_count == 5:
-                        self.assertEqual(len(release.secret_references(ssm)), 11)
+                        self.assertEqual(len(release.secret_references(ssm)), 11 + len(release.LABEL_ACTION_SETTINGS))
                     else:
                         with self.assertRaises(ClientError):
                             release.secret_references(ssm)

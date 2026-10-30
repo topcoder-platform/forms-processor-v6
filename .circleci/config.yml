@@ -93,6 +93,8 @@ workflows:
           filters:
             branches:
               only: develop
+            tags:
+                only: /^dev-.*/
       - deploy:
           name: deploy-production
           context: org-global
