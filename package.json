@@ -22,7 +22,8 @@
   "dependencies": {
     "@platformatic/kafka": "2.8.0",
     "pg": "8.23.0",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "tc-core-library-js": "github:topcoder-platform/tc-core-library-js#v4.0.0-rc.1"
   },
   "devDependencies": {
     "@eslint/js": "9.39.2",
