@@ -91,4 +91,4 @@ The Figma designs don't include these links, so check them first:
 
 - "sign up here" (general reply, developer getting started): `https://accounts-auth0.topcoder.com/?mode=signUp`. The practice email's "create your free account" links to `https://www.topcoder.com/`, as in its design.
 - The social links: Facebook, YouTube, LinkedIn, Twitter and Instagram (`https://discord.com/invite/topcoder` comes from the designs).
-- The `SALES_LEAD` template has no Figma design; it follows the shared shell. Its signature and `mailto:` are Kiril Kartunov's (hard-coded), while replies go to the first `LETS_TALK_SALES_REPLY_TO` address (default `support@topcoder.com`; the rest, default `test1@topcoder.com`, are copied). Set that list for production so the first address is the signer's.
+- The `SALES_LEAD` template has no Figma design; it follows the shared shell. Its signature and `mailto:` are Kiril Kartunov's (hard-coded), while replies go to every `LETS_TALK_SALES_REPLY_TO` address (default `support@topcoder.com`, `test1@topcoder.com`). Set that list for production so it includes the signer.
