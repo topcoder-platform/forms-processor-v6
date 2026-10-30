@@ -76,8 +76,11 @@ export const emailSettingsSchema = z
     templateId: z.string().regex(/^d-[a-f0-9]{32}$/),
     fromEmail: z.email().nullish(),
     fromName: z.string().max(200).optional(),
-    /** A trusted reply-to address, or the address in an answer (e.g. support forwards). */
-    replyTo: z.email().optional(),
+    /** Trusted reply-to address(es), or the address in an answer (e.g. support forwards).
+     * Several addresses become SendGrid's reply_to_list in email-service-v6. */
+    replyTo: z
+      .union([z.email(), z.array(z.email()).min(1).max(100)])
+      .optional(),
     replyToFromAnswer: z.string().min(1).optional(),
     /** Trusted copies, e.g. the sales team on a sales reply. */
     cc: z.array(z.email()).max(100).optional(),
@@ -139,11 +142,16 @@ export class BusEmail implements Action {
         ...new Set(s.recipients!.map((email) => email.toLowerCase())),
       ];
     }
+    const replyTos = s.replyTo
+      ? [...new Set([s.replyTo].flat().map((email) => email.toLowerCase()))]
+      : [];
     const replyTo =
-      s.replyTo?.toLowerCase() ??
-      (s.replyToFromAnswer
-        ? answerAddress(event, s.replyToFromAnswer)
-        : undefined);
+      replyTos.length > 1
+        ? replyTos
+        : (replyTos[0] ??
+          (s.replyToFromAnswer
+            ? answerAddress(event, s.replyToFromAnswer)
+            : undefined));
     const cc = [
       ...new Set((s.cc ?? []).map((email) => email.toLowerCase())),
     ].filter((email) => !recipients.includes(email));

@@ -63,7 +63,7 @@ const schema = z.object({
   LETS_TALK_SALES_REPLY_TEMPLATE_ID: templateId,
   LETS_TALK_SUPPORT_TEMPLATE_ID: templateId,
   LETS_TALK_SUPPORT_RECIPIENTS: emailList("support@topcoder.com"),
-  /** First address: the sales reply's reply-to; the rest are copied (email-service-v6 takes one reply-to). */
+  /** The sales reply's reply-to addresses; all of them receive a prospect's reply. */
   LETS_TALK_SALES_REPLY_TO: emailList(
     "support@topcoder.com,test1@topcoder.com",
   ),

@@ -37,7 +37,6 @@ export function letsTalkFlowSettings(config: Config): Map<string, unknown> {
     templateId,
     replyCapPerDay: config.LETS_TALK_REPLY_CAP_PER_DAY,
   });
-  const [salesReplyTo, ...salesCopies] = config.LETS_TALK_SALES_REPLY_TO;
   return new Map<string, unknown>([
     [
       LETS_TALK_FLOWS.legacySalesEmail,
@@ -65,10 +64,11 @@ export function letsTalkFlowSettings(config: Config): Map<string, unknown> {
       LETS_TALK_FLOWS.salesReply,
       {
         ...reply(config.LETS_TALK_SALES_REPLY_TEMPLATE_ID),
-        // email-service-v6 accepts a single reply-to: the first address gets the
-        // replies, the rest of the list is copied on every sales reply.
-        ...(salesReplyTo ? { replyTo: salesReplyTo } : {}),
-        ...(salesCopies.length ? { cc: salesCopies } : {}),
+        // Every address is a reply-to: a prospect's reply goes to all of them,
+        // and none of them gets a copy of the reply itself.
+        ...(config.LETS_TALK_SALES_REPLY_TO.length
+          ? { replyTo: config.LETS_TALK_SALES_REPLY_TO }
+          : {}),
       },
     ],
     [
