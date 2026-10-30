@@ -131,7 +131,7 @@ SecureStrings (`src/lets-talk-flows.ts`), not from the database.
 | `lets-talk-community-skills-reply` | `COMMUNITY_SKILLS` | Reply to the submitter (`LETS_TALK_SKILLS_TEMPLATE_ID`) |
 | `lets-talk-community-general-reply` | `COMMUNITY_GENERAL` | Reply to the submitter (`LETS_TALK_GENERAL_TEMPLATE_ID`) |
 | `lets-talk-wipro-queries-reply` | `WIPRO_QUERIES` | Reply to the submitter (`LETS_TALK_WIPRO_TEMPLATE_ID`) |
-| `lets-talk-sales-reply` | `SALES_LEAD` | Reply to the submitter (`LETS_TALK_SALES_REPLY_TEMPLATE_ID`); the first `LETS_TALK_SALES_REPLY_TO` address is reply-to, the others are copied |
+| `lets-talk-sales-reply` | `SALES_LEAD` | Reply to the submitter (`LETS_TALK_SALES_REPLY_TEMPLATE_ID`); every `LETS_TALK_SALES_REPLY_TO` address is a reply-to (SendGrid `reply_to_list`); none is copied |
 | `lets-talk-support-forward` | `COMMUNITY_SUPPORT` | Full submission to `LETS_TALK_SUPPORT_RECIPIENTS`, reply-to the submitter (`LETS_TALK_SUPPORT_TEMPLATE_ID`) |
 | `lets-talk-sales-email` (existing) | after cut-over: `UNKNOWN` only | The original internal email, now the fallback when classification fails |
 
