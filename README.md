@@ -198,6 +198,15 @@ and register it in `src/main.ts` for a new action type. Rule validation lives in
 only validates and persists events. No browser redirects occur in this async worker;
 a future member signup redirect belongs in the website's form response flow.
 
+## SpaceTech challenge notification
+
+Flow `space-tech-challenge-email` (forms-api-v6 migration `20261102010000_space_tech_challenge_email`,
+seeded disabled) emails every `space_tech_challenge` submission to `SPACE_TECH_CHALLENGE_RECIPIENTS`
+(comma-separated, same rules as `LETS_TALK_RECIPIENTS`) using `SPACE_TECH_CHALLENGE_TEMPLATE_ID`,
+with the submitter's `email` answer as reply-to. Both come from processor SSM SecureStrings
+(`src/space-tech-flows.ts`) and replace the flow's database settings; unset values defer delivery.
+Setup: [docs/emails/README.md](docs/emails/README.md#spacetech-challenge-notification).
+
 ## Reliability and operations
 
 * Kafka commits only after PostgreSQL persists the event. Duplicate submission IDs
