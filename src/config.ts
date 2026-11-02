@@ -73,6 +73,9 @@ const schema = z.object({
     .min(0)
     .max(100)
     .default(1),
+  // SpaceTech landing page challenges: internal notification to a fixed list.
+  SPACE_TECH_CHALLENGE_RECIPIENTS: emailList(""),
+  SPACE_TECH_CHALLENGE_TEMPLATE_ID: templateId,
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 });
 export type Config = z.infer<typeof schema> & {

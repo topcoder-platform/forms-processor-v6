@@ -34,8 +34,9 @@ def read_service(ecs):
     return service
 
 
-# Optional processor-owned settings for AI classification and label actions (docs/adr/0001).
-# Absent values defer the matching flows; the code defaults apply where documented.
+# Optional processor-owned settings for AI classification and label actions (docs/adr/0001),
+# and for the SpaceTech challenge notification. Absent values defer the matching flows;
+# the code defaults apply where documented.
 LABEL_ACTION_SETTINGS = [
     'AI_API_URL', 'AI_AUTH0_AUDIENCE',
     'LETS_TALK_CLASSIFY_MAX_ATTEMPTS', 'LETS_TALK_CLASSIFY_MAX_AGE_MINUTES',
@@ -43,6 +44,7 @@ LABEL_ACTION_SETTINGS = [
     'LETS_TALK_GENERAL_TEMPLATE_ID', 'LETS_TALK_WIPRO_TEMPLATE_ID',
     'LETS_TALK_SALES_REPLY_TEMPLATE_ID', 'LETS_TALK_SUPPORT_TEMPLATE_ID',
     'LETS_TALK_SUPPORT_RECIPIENTS', 'LETS_TALK_SALES_REPLY_TO', 'LETS_TALK_REPLY_CAP_PER_DAY',
+    'SPACE_TECH_CHALLENGE_RECIPIENTS', 'SPACE_TECH_CHALLENGE_TEMPLATE_ID',
 ]
 
 
