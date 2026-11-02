@@ -12,6 +12,7 @@ import {
   letsTalkFlowSettings,
 } from "./lets-talk-flows.js";
 import { LETS_TALK_ANSWERS } from "./lets-talk.js";
+import { spaceTechFlowSettings } from "./space-tech-flows.js";
 import { Store, log } from "./store.js";
 
 /** Start the database inbox worker, Kafka consumer, and private health endpoint with environment-owned Let's talk settings.
@@ -43,7 +44,10 @@ async function main(): Promise<void> {
         ),
       ],
     ]),
-    letsTalkFlowSettings(settings),
+    new Map([
+      ...letsTalkFlowSettings(settings),
+      ...spaceTechFlowSettings(settings),
+    ]),
     {
       submitterFlowIds: LETS_TALK_SUBMITTER_FLOWS,
       submitterAddressAnswer: LETS_TALK_ANSWERS.email,
