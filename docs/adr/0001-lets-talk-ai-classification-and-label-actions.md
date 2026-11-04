@@ -36,7 +36,7 @@ Constraints from the existing system:
 
 - forms-processor-v6 routes a submission to **all** matching flows at once, using rules on answers only. It holds a row lock for the length of each action, and the pool's idle-in-transaction limit is 45 s.
 - The processor's email action deliberately takes recipients **only from trusted configuration**.
-- email-service-v6 accepts **one** `replyTo`.
+- email-service-v6 accepted **one** `replyTo` (it now also takes a list, sent as SendGrid `reply_to_list`; Decision 7).
 - The AI workflow's access policy is scopes-only, so administrator member tokens can't read its runs.
 - The Let's talk form allows 500-character names and company. The workflow's input schema caps them at 100/100/200 and expects the selector's display labels, while the form sends stable keys.
 
@@ -86,7 +86,7 @@ Flows (seeded disabled by a forms-api-v6 migration):
 | `lets-talk-community-general-reply` | `sendgrid-email`, to the submitter | `COMMUNITY_GENERAL` |
 | `lets-talk-wipro-queries-reply` | `sendgrid-email`, to the submitter | `WIPRO_QUERIES` |
 | `lets-talk-support-forward` | `sendgrid-email`, to `support@topcoder.com`, reply-to the submitter | `COMMUNITY_SUPPORT` |
-| `lets-talk-sales-reply` | `sendgrid-email`, to the submitter, reply-to and copies from `LETS_TALK_SALES_REPLY_TO` | `SALES_LEAD` |
+| `lets-talk-sales-reply` | `sendgrid-email`, to the submitter, reply-to every `LETS_TALK_SALES_REPLY_TO` address | `SALES_LEAD` |
 | `lets-talk-sales-email` (existing) | `sendgrid-email`, to `LETS_TALK_RECIPIENTS` | `UNKNOWN` (fallback, Decision 6) |
 
 As for the existing flow, SSM values are authoritative for every Let's talk flow: template ids, the support recipients, the reply-to pool, and the AI API URL and audience. Changing them needs a redeploy.
@@ -129,7 +129,9 @@ A submission whose classification ends `FAILED` keeps the label `UNKNOWN`. It is
 
 `needsReview` doesn't change the action; it is shown in the UI. Holding auto-replies for review would affect at least the 45% of submissions with an empty message (Q1).
 
-### 7. Sales reply: the first listed address gets the replies, the rest are copied
+### 7. Sales reply: every listed address is a reply-to
+
+**Revised 2026-10-29.** Copying the other addresses (`cc`) sent each of them a copy of the reply to the prospect, which was not wanted. email-service-v6 now accepts `replyTo` as a list and sends two or more addresses as SendGrid `reply_to_list`, so **every** `LETS_TALK_SALES_REPLY_TO` address is a reply-to and none is copied. A prospect who presses Reply writes to all of them. This needs email-service-v6 deployed first: an older email-service-v6 skips a message whose `replyTo` is a list as malformed. The original decision follows.
 
 Decided 2026-10-22, revising the earlier "one address per submission from a pool". The sales reply should reach a configurable list of people (`LETS_TALK_SALES_REPLY_TO`). email-service-v6 accepts a single `replyTo`, so:
 

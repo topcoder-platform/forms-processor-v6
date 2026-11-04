@@ -131,7 +131,7 @@ SecureStrings (`src/lets-talk-flows.ts`), not from the database.
 | `lets-talk-community-skills-reply` | `COMMUNITY_SKILLS` | Reply to the submitter (`LETS_TALK_SKILLS_TEMPLATE_ID`) |
 | `lets-talk-community-general-reply` | `COMMUNITY_GENERAL` | Reply to the submitter (`LETS_TALK_GENERAL_TEMPLATE_ID`) |
 | `lets-talk-wipro-queries-reply` | `WIPRO_QUERIES` | Reply to the submitter (`LETS_TALK_WIPRO_TEMPLATE_ID`) |
-| `lets-talk-sales-reply` | `SALES_LEAD` | Reply to the submitter (`LETS_TALK_SALES_REPLY_TEMPLATE_ID`); the first `LETS_TALK_SALES_REPLY_TO` address is reply-to, the others are copied |
+| `lets-talk-sales-reply` | `SALES_LEAD` | Reply to the submitter (`LETS_TALK_SALES_REPLY_TEMPLATE_ID`); every `LETS_TALK_SALES_REPLY_TO` address is a reply-to (SendGrid `reply_to_list`); none is copied |
 | `lets-talk-support-forward` | `COMMUNITY_SUPPORT` | Full submission to `LETS_TALK_SUPPORT_RECIPIENTS`, reply-to the submitter (`LETS_TALK_SUPPORT_TEMPLATE_ID`) |
 | `lets-talk-sales-email` (existing) | after cut-over: `UNKNOWN` only | The original internal email, now the fallback when classification fails |
 
@@ -197,6 +197,15 @@ and register it in `src/main.ts` for a new action type. Rule validation lives in
 `src/contracts.ts`; database queue/receipts live in `src/store.ts`. The Kafka layer
 only validates and persists events. No browser redirects occur in this async worker;
 a future member signup redirect belongs in the website's form response flow.
+
+## SpaceTech challenge notification
+
+Flow `space-tech-challenge-email` (forms-api-v6 migration `20261102010000_space_tech_challenge_email`,
+seeded disabled) emails every `space_tech_challenge` submission to `SPACE_TECH_CHALLENGE_RECIPIENTS`
+(comma-separated, same rules as `LETS_TALK_RECIPIENTS`) using `SPACE_TECH_CHALLENGE_TEMPLATE_ID`,
+with the submitter's `email` answer as reply-to. Both come from processor SSM SecureStrings
+(`src/space-tech-flows.ts`) and replace the flow's database settings; unset values defer delivery.
+Setup: [docs/emails/README.md](docs/emails/README.md#spacetech-challenge-notification).
 
 ## Reliability and operations
 

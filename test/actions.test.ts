@@ -145,7 +145,38 @@ test("a submitter reply goes to the submitted address with only the first name a
   });
 });
 
-test("the sales reply sets the trusted reply-to and copies the rest, never the recipient twice", async () => {
+test("several trusted reply-to addresses are published as a deduplicated list", async () => {
+  const { published, action } = capture();
+  await action.execute(
+    event,
+    {
+      ...replySettings,
+      replyTo: [
+        "Support@topcoder.com",
+        "test1@topcoder.com",
+        "support@topcoder.com",
+      ],
+    },
+    context(),
+  );
+  assert.deepEqual(published[0].payload.replyTo, [
+    "support@topcoder.com",
+    "test1@topcoder.com",
+  ]);
+  assert.equal(published[0].payload.cc, undefined);
+});
+
+test("a one-address reply-to list is published as a single reply-to", async () => {
+  const { published, action } = capture();
+  await action.execute(
+    event,
+    { ...replySettings, replyTo: ["Support@topcoder.com"] },
+    context(),
+  );
+  assert.equal(published[0].payload.replyTo, "support@topcoder.com");
+});
+
+test("a trusted reply-to with copies never copies the recipient twice", async () => {
   const { published, action } = capture();
   await action.execute(
     event,
@@ -247,6 +278,8 @@ test("recipient settings must name exactly one source, and one reply-to", async 
     { ...replySettings, replyTo: "a@example.com", replyToFromAnswer: "email" },
     { ...replySettings, templateId: "" },
     { ...replySettings, cc: ["not-an-email"] },
+    { ...replySettings, replyTo: [] },
+    { ...replySettings, replyTo: ["a@example.com", "not-an-email"] },
   ])
     await assert.rejects(
       action.execute(event, bad, context()),

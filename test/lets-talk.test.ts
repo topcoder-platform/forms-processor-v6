@@ -101,7 +101,7 @@ const base = {
   KAFKA_URL: "localhost:9092",
 };
 
-test("flow settings: the sales reply's first address is reply-to and the rest are copied", () => {
+test("flow settings: every sales reply address is a reply-to and none is copied", () => {
   const settings = letsTalkFlowSettings(
     config({
       ...base,
@@ -114,8 +114,11 @@ test("flow settings: the sales reply's first address is reply-to and the rest ar
     recipientsFromAnswer: "email",
     templateId: "d-" + "b".repeat(32),
     replyCapPerDay: 1,
-    replyTo: "support@topcoder.com",
-    cc: ["test1@topcoder.com", "sales@topcoder.com"],
+    replyTo: [
+      "support@topcoder.com",
+      "test1@topcoder.com",
+      "sales@topcoder.com",
+    ],
   });
 });
 
@@ -125,8 +128,7 @@ test("flow settings: defaults, support forward and classification", () => {
     recipientsFromAnswer: "email",
     templateId: "",
     replyCapPerDay: 1,
-    replyTo: "support@topcoder.com",
-    cc: ["test1@topcoder.com"],
+    replyTo: ["support@topcoder.com", "test1@topcoder.com"],
   });
   assert.deepEqual(settings.get(LETS_TALK_FLOWS.supportForward), {
     recipients: ["support@topcoder.com"],

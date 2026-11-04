@@ -91,4 +91,23 @@ The Figma designs don't include these links, so check them first:
 
 - "sign up here" (general reply, developer getting started): `https://accounts-auth0.topcoder.com/?mode=signUp`. The practice email's "create your free account" links to `https://www.topcoder.com/`, as in its design.
 - The social links: Facebook, YouTube, LinkedIn, Twitter and Instagram (`https://discord.com/invite/topcoder` comes from the designs).
-- The `SALES_LEAD` template has no Figma design; it follows the shared shell. Its signature and `mailto:` are Kiril Kartunov's (hard-coded), while replies go to the first `LETS_TALK_SALES_REPLY_TO` address (default `support@topcoder.com`; the rest, default `test1@topcoder.com`, are copied). Set that list for production so the first address is the signer's.
+- The `SALES_LEAD` template has no Figma design; it follows the shared shell. Its signature and `mailto:` are Kiril Kartunov's (hard-coded), while replies go to every `LETS_TALK_SALES_REPLY_TO` address (default `support@topcoder.com`, `test1@topcoder.com`). Set that list for production so it includes the signer.
+
+## SpaceTech challenge notification
+
+[`space-tech-challenge-email.html`](space-tech-challenge-email.html) is the internal email for the SpaceTech landing page form (`space_tech_challenge`). Flow `space-tech-challenge-email` (forms-api-v6 migration `20261102010000_space_tech_challenge_email`) sends every submission to the addresses in `SPACE_TECH_CHALLENGE_RECIPIENTS`, with the submitter's `email` answer as reply-to. Suggested subject: **New space-data challenge** (keep it fixed).
+
+It uses `answers.full_name`, `answers.email`, `answers.company`, `answers.challenge`, `submittedAt`, `sourcePage` and `submissionId`. All the answers are submitter-controlled: double braces only. For test data, use `{"answers":{"full_name":"Alex Doe","email":"alex@example.com","company":"Orbital Labs","challenge":"Detect debris in\nlow-orbit imagery."},"submittedAt":"2026-11-02T10:00:00.000Z","sourcePage":"/space-tech/","submissionId":"00000000-0000-0000-0000-000000000000"}`.
+
+To go live in an environment:
+
+1. Create the template (steps 1–6 above).
+2. Create the SecureStrings `/config/forms-processor-v6/appvar/SPACE_TECH_CHALLENGE_RECIPIENTS` (comma-separated addresses) and `/config/forms-processor-v6/appvar/SPACE_TECH_CHALLENGE_TEMPLATE_ID`, then **redeploy the processor**.
+3. Enable the flow:
+
+   ```sql
+   UPDATE forms."ProcessorFlow" SET enabled = true, "updatedAt" = now()
+   WHERE id = 'space-tech-challenge-email' AND "formKey" = 'space_tech_challenge';
+   ```
+
+Submissions made while the flow is disabled are queued and are sent once it is enabled. Changing the list means updating the parameter and redeploying.
