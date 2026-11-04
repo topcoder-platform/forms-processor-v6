@@ -25,7 +25,7 @@ Submissions that do not opt in stay in the API and do not reach this processor.
 
 ```sh
 nvm use
-npm ci
+npm ci --install-links=true
 cp .env.example .env
 # Apply forms-api-v6 migrations to your local forms database first.
 npm run dev

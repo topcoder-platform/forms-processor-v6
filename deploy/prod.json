@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "environment": "prod",
+  "accountId": "409275337247",
+  "region": "us-east-1",
+  "deployRoleArn": "arn:aws:iam::409275337247:role/forms-processor-v6-prod-deploy",
+  "taskRoleArn": "arn:aws:iam::409275337247:role/forms-processor-v6-production-TaskRole-F7Uvj6UKRNRm",
+  "executionRoleArn": "arn:aws:iam::409275337247:role/forms-processor-v6-production-ExecutionRole-M3KAOLfyCIxx",
+  "cluster": "topcoder-infrastructure",
+  "service": "forms-processor-v6",
+  "taskFamily": "forms-processor-v6",
+  "circleciOrgId": "947bef5e-1669-415d-b83c-4fc85155b7df",
+  "circleciProjectId": "9abc16b0-0d52-490f-a4c0-6e3db3ede656",
+  "repository": "github.com/topcoder-platform/forms-processor-v6",
+  "branch": "master",
+  "images": {
+    "forms-processor-v6": "forms-processor-v6"
+  }
+}
