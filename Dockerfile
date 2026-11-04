@@ -1,14 +1,14 @@
 ARG NODE_VERSION=26.12.1
 FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
-COPY package.json package-lock.json .npmrc ./
+COPY package.json package-lock.json ./
 COPY tools ./tools
-RUN npm ci
+RUN npm ci --install-links=true
 COPY . .
 RUN npm run lint && npm run typecheck && npm test && npm run test:dependency-compat && npm run build
 
 FROM build AS production-dependencies
-RUN npm prune --omit=dev
+RUN npm prune --install-links=true --omit=dev
 
 FROM alpine:3.24 AS runtime
 ARG NODE_VERSION
