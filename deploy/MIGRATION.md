@@ -1,0 +1,42 @@
+# OIDC deployment migration
+
+This change replaces the Auth0 credential broker and SSM-to-shell deployment path with [tc-deploy-scripts v2.0.5](https://github.com/topcoder-platform/tc-deploy-scripts/releases/tag/v2.0.5), fetched by tag and verified against commit `bff574ab5c0b46773e25d2af1eff76675fba2ba5`. Build and deployment run in separate jobs. The deployer cannot read Parameter Store, Secrets Manager or decrypt KMS data, including through another assumed role. ECS continues resolving the existing runtime secret references using the execution role.
+
+## Production target
+
+The read-only inventory on 2026-11-03 verified account `409275337247`, cluster `topcoder-infrastructure`, service `forms-processor-v6`, family `forms-processor-v6`, and container `forms-processor-v6`. `prod.json` preserves the observed task/execution roles and names the proposed service-specific deployment role. [prod-baseline.json](https://github.com/topcoder-platform/v6-services-iac/blob/main/services/forms-processor-v6/deploy/prod-baseline.json) records references only; it contains no parameter values. Do not recreate the service or replace its complete task definition from this baseline.
+
+## Infrastructure prerequisites, applied separately by an administrator
+
+1. In each account, register the CircleCI OIDC issuer `https://oidc.circleci.com/org/947bef5e-1669-415d-b83c-4fc85155b7df` with client ID `947bef5e-1669-415d-b83c-4fc85155b7df`. The current production account has only the legacy Auth0 provider. Do not remove that provider until all its consumers have migrated.
+2. Review and install [iam/prod-role.cloudformation.json](https://github.com/topcoder-platform/v6-services-iac/blob/main/services/forms-processor-v6/deploy/iam/prod-role.cloudformation.json) with an administrator/IaC identity. It creates the proposed deployment role and applies the same least-privilege policy as a permissions boundary. The trust binds this CircleCI project, repository, checkout branch and configuration branch. It does not grant infrastructure creation to CircleCI. The role and matching boundary include `inspector2:ListFindings` and `inspector2:ListCoverage` restricted to the deployment region; these scan-metadata APIs require `Resource: "*"`. Secret-access denies remain explicit.
+3. Configure ECR repository `forms-processor-v6` with unconditional `IMMUTABLE` tags and supported scanning. Preserve existing enhanced scanning where enabled. Existing tags are not retagged. The release fails for MEDIUM/HIGH/CRITICAL/UNDEFINED findings, failed scans, or a mismatched digest.
+4. In the infrastructure that owns the task definition, add the reviewed container check from `prod-healthcheck.json`, keeping all roles, runtime secret references, resources, mounts and sidecars. Verify the health endpoint against the running container in dev first. Preserve circuit-breaker rollback and positive desired capacity. Remove any `RESET_DB` secret binding and plaintext secret environment entries before adoption. Keep the execution role's runtime read permissions scoped to the references that service needs.
+5. Create restricted `forms-processor-v6-dev-deploy` and `forms-processor-v6-prod-deploy` CircleCI contexts without Auth0/static AWS credentials. Restrict production to the reviewed `master` checkout and configuration ref, authorized operators, and approval job. Remove legacy credentials from project settings too: removing `org-global` alone does not remove project-level variables. Confirm `CIRCLE_OIDC_TOKEN_V3` is issued. Disable secret access for forks and SSH debugging in deployment jobs.
+
+## Development acceptance before merge/release
+
+Read-only inventory on 2026-11-04 verified `dev.json` against the actual development service, task/execution roles and image repositories. This PR targets `develop`. Matching IAM templates and detailed baselines remain private. **Keep this PR in draft until the service-specific prerequisites below are complete.** No AWS or CircleCI resources were provisioned by this refresh.
+
+- Install the service deployment role and matching permissions boundary.
+- Create the restricted empty CircleCI deployment context.
+
+Run the shared offline suite, validate the CircleCI config and IAM policies, and test a dev release plus an unhealthy-image rollback. Verify CloudTrail contains no SSM/Secrets Manager calls from the deployment principal. Remove its old broker grants only after migration. Check the runtime secret references and roles stayed unchanged. Production requires the manual approval job and a passing digest/scan/health verification.
+
+The pinned executor is `cimg/aws@sha256:4cf3768db00ddf9bc439b8c84e8a60c11a14edf81c8baf76f74132144f8340d5`. Python/AWS CLI/Buildx/Git compatibility was tested with the shared offline suite. No package installation or service build runs in the deployment job. The Dockerfile retains the existing in-image quality gates. This PR does not deploy, change IAM, rotate credentials, or claim a successful live rollout.
+
+## Processor release behavior
+
+Application lint/type checks, routing/retry unit tests, PostgreSQL integration tests and compilation remain prerequisites. Deployment tests now run the pinned shared security/rollout suite. The old SSM-discovery release implementation and its discovery-specific tests are replaced. Existing ECS runtime references are preserved byte-for-byte instead of discovering optional settings during a release; additions/removals belong in the infrastructure that owns the task. Forms API schema migration must still precede a processor release. Zero-capacity activation/bootstrap is an administrator operation: the deployer refuses it.
+
+## Infrastructure source
+
+IAM templates and detailed AWS baselines are maintained in the private [v6-services-iac service directory](https://github.com/topcoder-platform/v6-services-iac/tree/main/services/forms-processor-v6). Provision infrastructure separately with an administrator identity; application CI does not fetch that repository or install IAM. Required application manifests and health-check proposals remain here.
+
+## Dev branch refresh
+
+This PR targets `develop` and preserves its current application/dependency fixes. The shared suite is v2.0.5 (82 offline tests); service-specific adapters and their tests remain part of review. Keep this PR in draft until its documented infrastructure and integration prerequisites are met. Updating these files does not provision AWS or CircleCI resources.
+
+Source checkout uses the public HTTPS repository and verifies the exact CircleCI commit, avoiding dependency on failing SSH checkout keys. No GitHub token is added to build or deployment contexts.
+
+The credential-free builder rejects committed `.npmrc` files. Preserve the existing local compatibility dependencies with explicit `--install-links=true` npm options instead; do not reintroduce credential-capable npm configuration files.

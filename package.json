@@ -17,12 +17,14 @@
     "start": "node dist/main.js",
     "dev": "tsx watch --env-file=.env src/main.ts",
     "deploy:dev": "BRANCH=$(git rev-parse --abbrev-ref HEAD) && TAG=\"dev-${BRANCH}\" && git tag -d \"$TAG\" 2>/dev/null; git push origin \":refs/tags/$TAG\" 2>/dev/null; git tag \"$TAG\" && git push origin \"$TAG\"",
-    "format": "prettier --write src test *.json *.mjs .circleci/config.yml deploy/*.yaml"
+    "format": "prettier --write src test *.json *.mjs .circleci/config.yml deploy/*.yaml",
+    "test:dependency-compat": "node --test tools/minimatch-compat/index.test.cjs"
   },
   "dependencies": {
     "@platformatic/kafka": "2.8.0",
     "pg": "8.23.0",
-    "zod": "4.3.6"
+    "zod": "4.6.7",
+    "tc-core-library-js": "https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/58de37670180e183e8378c3d203df0112a0414f6"
   },
   "devDependencies": {
     "@eslint/js": "9.39.2",
@@ -32,6 +34,17 @@
     "prettier": "3.8.1",
     "tsx": "4.22.4",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.54.0"
+    "typescript-eslint": "8.72.1"
+  },
+  "overrides": {
+    "minimatch": "file:tools/minimatch-compat",
+    "brace-expansion@^1": "1.1.21",
+    "brace-expansion@^2": "2.1.7",
+    "brace-expansion@>=3": "5.0.12",
+    "js-yaml@^4": "4.3.2",
+    "qs": "6.16.1",
+    "ajv@^6": "6.15.0",
+    "flatted": "3.4.2",
+    "fast-uri": "3.1.9"
   }
 }

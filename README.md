@@ -25,7 +25,7 @@ Submissions that do not opt in stay in the API and do not reach this processor.
 
 ```sh
 nvm use
-npm ci
+npm ci --install-links=true
 cp .env.example .env
 # Apply forms-api-v6 migrations to your local forms database first.
 npm run dev
@@ -264,3 +264,32 @@ See [deploy/README.md](deploy/README.md). CircleCI checks every branch and deplo
 pinned Topcoder AWS credential helper as forms-api-v6. Each environment needs its
 existing ECS service/ECR repository, required SSM references and API migrations before deployment.
 The pipeline registers a new task revision and updates the existing service; it does not apply CloudFormation.
+
+## Shared authentication and bus client (v6 refresh)
+
+This branch uses `tc-core-library-js` **4.0.0-rc.1**. Use its named
+`createJwtVerifier` / `createJwtAuthenticator`, `createM2MClient`, and
+`createBusApiClient` exports for shared authentication and bus API publishing.
+Service-specific roles, scopes, sessions and ownership checks remain in this service.
+The former bus wrapper dependency and local JWT cryptography must not be reintroduced.
+
+RSA verification requires an exact configured issuer and audience (`JWT_AUDIENCE`
+for client tokens, `AUTH0_AUDIENCE` for machine/API tokens, or this service's explicit
+issuer-policy settings). HMAC secrets must be at least 32 bytes; no default secret
+is supplied. Expiry is enforced. Machine identity comes from the shared verifier,
+not the presence of scopes. Supply real development credentials through the service's
+existing environment configuration before deployment.
+
+Bus publishers use `createBusApiClient(config).postEvent(event)` with the existing
+event envelope and optional key. Configure `BUSAPI_URL` for v6 and the existing
+OAuth credentials/token provider. The client uses bounded HTTPS requests and does
+not retry POSTs automatically. Application retry/outbox behavior remains local.
+
+See the [core migration guide](https://github.com/topcoder-platform/tc-core-library-js/blob/v4.0.0-rc.1/MIGRATION.md)
+for the API mapping, compatibility requirements, and rollout scope.
+
+## Security maintenance
+
+The production image uses Node.js 26.12.1 on Alpine 3.24 and runs as UID 10001. It contains only compiled application code, production dependencies, and the RDS trust bundle. npm, development dependencies, and environment files are excluded. Dependencies install from the lockfile, with the shared core pinned to an immutable patched revision.
+
+Run `npm run lint`, `npm run typecheck`, `npm test`, `npm run test:dependency-compat`, and `npm audit`. The dependency compatibility tests preserve the legacy matcher API while using its patched engine. Database integration tests continue to require a disposable database named `forms_processor_test`.
