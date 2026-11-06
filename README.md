@@ -33,7 +33,8 @@ npm run dev
 
 `DATABASE_URL` uses the existing forms API PostgreSQL database/schema.
 `KAFKA_URL` is a comma-separated broker list. The consumer group defaults to
-`forms-processor-v6`; the topic is the API's fixed `form.submitted` contract.
+`forms-processor-v6`; the topics are the API's fixed `form.submitted` contract and
+email-service-v6's `external.action.email.sent` (see [SendGrid message IDs](#sendgrid-message-ids)).
 `KAFKA_FROM_BEGINNING=true` reads retained events when the group has no valid
 committed offset. `KAFKA_SSL_ENABLED` enables broker TLS. The dev MSK cluster uses
 9092; TLS deployments use 9094. SASL/IAM Kafka authentication is not implemented.
@@ -206,6 +207,23 @@ seeded disabled) emails every `space_tech_challenge` submission to `SPACE_TECH_C
 with the submitter's `email` answer as reply-to. Both come from processor SSM SecureStrings
 (`src/space-tech-flows.ts`) and replace the flow's database settings; unset values defer delivery.
 Setup: [docs/emails/README.md](docs/emails/README.md#spacetech-challenge-notification).
+
+## SendGrid message IDs
+
+Every email this processor publishes carries `correlationId: "<submissionId>:<flowId>"` in
+its `external.action.email` payload. After SendGrid accepts it, email-service-v6 publishes
+`external.action.email.sent` (key = correlationId) with
+`{ correlationId, sendgridMessageId, templateId, sentAt }`. The worker consumes that topic
+too (`EMAIL_SENT_TOPIC`, default `external.action.email.sent`; empty disables it) and saves
+the ID on the matching delivery: `forms."ProcessorDelivery"."sendgridMessageId"` and
+`"emailSentAt"` (forms-api-v6 migration `20261104010000_processor_delivery_sendgrid_message`,
+which must be deployed first; startup checks the columns). The forms reports show the IDs
+as SendGrid log links.
+
+Reports are at-least-once: duplicates and email-service retries overwrite `emailSentAt`
+and keep the latest non-null ID. Malformed reports, and reports for emails other services
+sent or for deleted deliveries, are logged without content and committed. The topic must
+exist on the cluster (the consumer does not auto-create topics).
 
 ## Reliability and operations
 

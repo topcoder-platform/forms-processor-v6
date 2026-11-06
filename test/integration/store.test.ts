@@ -49,6 +49,12 @@ before(async () => {
       "utf8",
     ),
   );
+  await pool.query(
+    await readFile(
+      new URL("../fixtures/sendgrid-message.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   // The classification table references forms-api's Submission table; a stub is enough here.
   await pool.query('CREATE TABLE forms."Submission" (id UUID PRIMARY KEY)');
   await pool.query(
@@ -94,6 +100,59 @@ test("disabled flows queue; enabling later sends once despite duplicate Kafka de
   assert.equal(await store.routeOne(), false);
   assert.equal(await store.deliverOne(), false);
   assert.equal(calls, 1);
+});
+test("SendGrid send reports land on their delivery and keep the latest non-null message ID", async () => {
+  const flows: (string | undefined)[] = [];
+  const capturing = new Store(
+    pool,
+    new Map([
+      [
+        "sendgrid-email",
+        {
+          execute: async (_event, _settings, context) => {
+            flows.push(context?.flowId);
+          },
+        },
+      ],
+    ]),
+  );
+  await pool.query('UPDATE forms."ProcessorFlow" SET enabled = true');
+  await capturing.enqueue(event);
+  await capturing.routeOne();
+  await due();
+  await capturing.deliverOne();
+  assert.deepEqual(flows, ["lets-talk-sales-email"]);
+
+  const sent = {
+    submissionId: event.submissionId,
+    flowId: "lets-talk-sales-email",
+    sendgridMessageId: "sg-first",
+    sentAt: new Date("2026-11-04T10:00:00.000Z"),
+  };
+  assert.equal(await capturing.recordEmailSent(sent), true);
+  assert.equal(
+    await capturing.recordEmailSent({
+      ...sent,
+      sendgridMessageId: null,
+      sentAt: new Date("2026-11-04T10:05:00.000Z"),
+    }),
+    true,
+  );
+  assert.equal(
+    await capturing.recordEmailSent({ ...sent, flowId: "unknown-flow" }),
+    false,
+  );
+  const {
+    rows: [row],
+  } = await pool.query(
+    'SELECT "sendgridMessageId", "emailSentAt" FROM forms."ProcessorDelivery" WHERE "submissionId" = $1',
+    [event.submissionId],
+  );
+  assert.equal(row.sendgridMessageId, "sg-first");
+  assert.equal(
+    new Date(row.emailSentAt).toISOString(),
+    "2026-11-04T10:05:00.000Z",
+  );
 });
 test("concurrent workers claim each delivery only once", async () => {
   await store.enqueue(event);

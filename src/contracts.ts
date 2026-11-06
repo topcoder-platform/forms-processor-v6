@@ -38,6 +38,46 @@ export function parseEvent(value: Buffer | null | undefined): Submission {
   }
 }
 
+/** A SendGrid send reported by email-service-v6 for an email this processor published. */
+export interface EmailSent {
+  submissionId: string;
+  flowId: string;
+  /** SendGrid's X-Message-Id; null when SendGrid returned none. */
+  sendgridMessageId: string | null;
+  sentAt: Date;
+}
+const emailSentEnvelopeSchema = z.object({
+  topic: z.string().min(1),
+  originator: z.string().min(1),
+  "mime-type": z.literal("application/json"),
+  timestamp: z.iso.datetime({ offset: true }),
+  payload: z.object({
+    // `<submissionId>:<flowId>`, as set by BusEmail.
+    correlationId: z.string().regex(/^[0-9a-fA-F-]{36}:[^\s:]{1,100}$/),
+    sendgridMessageId: z.string().min(1).max(255).nullable(),
+    templateId: z.string().min(1).max(255),
+    sentAt: z.iso.datetime({ offset: true }),
+  }),
+});
+
+/** Parse an email-sent Bus envelope; throws InvalidEvent without input data for malformed or foreign correlation IDs. */
+export function parseEmailSent(value: Buffer | null | undefined): EmailSent {
+  try {
+    const { payload } = emailSentEnvelopeSchema.parse(
+      JSON.parse(value?.toString("utf8") ?? ""),
+    );
+    const separator = payload.correlationId.indexOf(":");
+    return {
+      submissionId: z.uuid().parse(payload.correlationId.slice(0, separator)),
+      flowId: payload.correlationId.slice(separator + 1),
+      sendgridMessageId: payload.sendgridMessageId,
+      sentAt: new Date(payload.sentAt),
+    };
+  } catch {
+    throw new InvalidEvent();
+  }
+}
+
 /** An AI classification label, as stored in forms."SubmissionClassification".label. */
 export const labelSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,39}$/);
 /** The label of a submission that was never classified, or whose classification failed. */

@@ -89,7 +89,14 @@ async function main(): Promise<void> {
   };
   const worker = work();
   try {
-    await consume(settings, (event) => store.enqueue(event), shutdown.signal);
+    await consume(
+      settings,
+      {
+        enqueue: (event) => store.enqueue(event),
+        recordEmailSent: (sent) => store.recordEmailSent(sent),
+      },
+      shutdown.signal,
+    );
   } finally {
     stop();
     await worker;

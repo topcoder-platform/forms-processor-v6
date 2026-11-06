@@ -35,3 +35,11 @@ test("invalid sales settings fail startup without disclosing values", () => {
     );
   }
 });
+test("SendGrid send reports are consumed from external.action.email.sent unless EMAIL_SENT_TOPIC is emptied", () => {
+  assert.equal(config(base).EMAIL_SENT_TOPIC, "external.action.email.sent");
+  assert.equal(config({ ...base, EMAIL_SENT_TOPIC: " " }).EMAIL_SENT_TOPIC, "");
+  assert.equal(
+    config({ ...base, EMAIL_SENT_TOPIC: "email.sent" }).EMAIL_SENT_TOPIC,
+    "email.sent",
+  );
+});

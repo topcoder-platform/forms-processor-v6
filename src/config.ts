@@ -31,6 +31,8 @@ const schema = z.object({
   KAFKA_GROUP_ID: z.string().min(1).default("forms-processor-v6"),
   KAFKA_SSL_ENABLED: boolean.default(false),
   KAFKA_FROM_BEGINNING: boolean.default(true),
+  /** email-service-v6's SendGrid send reports; empty disables recording SendGrid message IDs. */
+  EMAIL_SENT_TOPIC: z.string().trim().default("external.action.email.sent"),
   BUSAPI_URL: z.string().optional(),
   AUTH0_URL: z.string().optional(),
   AUTH0_AUDIENCE: z.string().optional(),
