@@ -11,6 +11,7 @@ import {
   matches,
   matchesLabel,
   submissionSchema,
+  type EmailSent,
   type Submission,
 } from "./contracts.js";
 
@@ -75,10 +76,24 @@ export class Store {
     );
   }
 
-  /** Verify all required migration tables exist at startup; returns nothing or throws on missing schema/DB failure. */
+  /** Record SendGrid's message ID on the delivery that published the email; returns whether a delivery matched.
+   * Duplicates and resends keep the latest non-null ID. Throws on DB failure so Kafka redelivers.
+   */
+  async recordEmailSent(sent: EmailSent): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      'UPDATE forms."ProcessorDelivery" SET "sendgridMessageId" = COALESCE($3, "sendgridMessageId"), "emailSentAt" = $4 WHERE "submissionId" = $1 AND "flowId" = $2',
+      [sent.submissionId, sent.flowId, sent.sendgridMessageId, sent.sentAt],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /** Verify all required migration tables and columns exist at startup; returns nothing or throws on missing schema/DB failure. */
   async ready(): Promise<void> {
     await this.pool.query(
       'SELECT 1 FROM forms."ProcessorEvent", forms."ProcessorFlow", forms."ProcessorDelivery", forms."SubmissionClassification" LIMIT 0',
+    );
+    await this.pool.query(
+      'SELECT "sendgridMessageId", "emailSentAt" FROM forms."ProcessorDelivery" LIMIT 0',
     );
   }
 
@@ -181,7 +196,12 @@ export class Store {
           this.settingsOverrides.has(row.flowId)
             ? this.settingsOverrides.get(row.flowId)
             : row.settings,
-          await this.context(client, row.submissionId, row.receivedAt),
+          await this.context(
+            client,
+            row.submissionId,
+            row.flowId,
+            row.receivedAt,
+          ),
         );
         skipped = result?.skipped;
         if (result?.classification) {
@@ -230,10 +250,11 @@ export class Store {
     });
   }
 
-  /** Build the per-delivery context: receipt time, stored classification, and the reply-cap counter. */
+  /** Build the per-delivery context: flow, receipt time, stored classification, and the reply-cap counter. */
   private async context(
     client: PoolClient,
     submissionId: string,
+    flowId: string,
     receivedAt: Date,
   ): Promise<ActionContext> {
     const {
@@ -243,6 +264,7 @@ export class Store {
       [submissionId],
     );
     return {
+      flowId,
       receivedAt: new Date(receivedAt),
       classification: stored
         ? ({

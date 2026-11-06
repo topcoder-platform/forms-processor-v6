@@ -4,7 +4,14 @@ import {
   MessagesStreamFallbackModes,
   type Message,
 } from "@platformatic/kafka";
-import { InvalidEvent, parseEvent, type Submission } from "./contracts.js";
+import {
+  InvalidEvent,
+  SUBMISSIONS_TOPIC,
+  parseEmailSent,
+  parseEvent,
+  type EmailSent,
+  type Submission,
+} from "./contracts.js";
 import { log } from "./store.js";
 import type { Config } from "./config.js";
 
@@ -32,14 +39,59 @@ export async function ingest(
   await message.commit();
 }
 
-/** Consume form.submitted until aborted; failures propagate so ECS can restart from committed offsets.
+/** Record a SendGrid send report then commit it; invalid reports are logged by offset and discarded.
+ * `record` returns false for emails this processor did not publish (or whose delivery is gone), which are skipped.
+ * Storage and commit failures propagate without advancing later offsets.
+ */
+export async function ingestEmailSent(
+  message: Pick<Message, "value" | "topic" | "partition" | "offset" | "commit">,
+  record: (sent: EmailSent) => Promise<boolean>,
+): Promise<void> {
+  let sent: EmailSent;
+  try {
+    sent = parseEmailSent(message.value);
+  } catch (error) {
+    if (!(error instanceof InvalidEvent)) throw error;
+    log("invalid_email_sent_discarded", {
+      topic: message.topic,
+      partition: message.partition,
+      offset: String(message.offset),
+    });
+    await message.commit();
+    return;
+  }
+  if (!(await record(sent)))
+    log("email_sent_unmatched", {
+      submissionId: sent.submissionId,
+      flowId: sent.flowId,
+    });
+  await message.commit();
+}
+
+/** Handlers for the consumed topics. */
+export interface ConsumeHandlers {
+  /** Durably enqueue a form.submitted event. */
+  enqueue: (event: Submission) => Promise<void>;
+  /** Save a SendGrid send report on its delivery; returns whether one matched. */
+  recordEmailSent: (sent: EmailSent) => Promise<boolean>;
+}
+
+/** Consume form.submitted (and SendGrid send reports on EMAIL_SENT_TOPIC) until aborted; failures propagate so ECS can restart from committed offsets.
  * The caller supplies validated config, durable enqueue, and a shutdown signal; no email runs on this loop.
  */
 export async function consume(
   config: Config,
-  enqueue: (event: Submission) => Promise<void>,
+  handlers: ConsumeHandlers,
   signal: AbortSignal,
 ): Promise<void> {
+  const emailSentTopic = config.EMAIL_SENT_TOPIC;
+  // config() already rejects this; fail fast for any other Config, as submissions would be lost.
+  if (emailSentTopic === SUBMISSIONS_TOPIC)
+    throw new Error("Invalid configuration: EMAIL_SENT_TOPIC");
+  const topics = [
+    SUBMISSIONS_TOPIC,
+    ...(emailSentTopic ? [emailSentTopic] : []),
+  ];
   const consumer = new Consumer({
     clientId: "forms-processor-v6",
     groupId: config.KAFKA_GROUP_ID,
@@ -53,7 +105,7 @@ export async function consume(
   });
   try {
     const stream = await consumer.consume({
-      topics: ["form.submitted"],
+      topics,
       autocommit: false,
       mode: MessagesStreamModes.COMMITTED,
       fallbackMode: config.KAFKA_FROM_BEGINNING
@@ -69,12 +121,14 @@ export async function consume(
     if (signal.aborted) stop();
     log("kafka_subscribed", {
       group: config.KAFKA_GROUP_ID,
-      topic: "form.submitted",
+      topic: topics.join(","),
     });
     try {
       for await (const message of stream) {
         if (signal.aborted) break;
-        await ingest(message, enqueue);
+        if (emailSentTopic && message.topic === emailSentTopic)
+          await ingestEmailSent(message, handlers.recordEmailSent);
+        else await ingest(message, handlers.enqueue);
       }
     } finally {
       signal.removeEventListener("abort", stop);

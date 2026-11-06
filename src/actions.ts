@@ -32,6 +32,8 @@ export interface ClassificationRecord {
 
 /** Per-delivery facts the store supplies to an action. */
 export interface ActionContext {
+  /** The delivery's flow; emails carry `<submissionId>:<flowId>` so email-service-v6 can report the SendGrid message back. */
+  flowId?: string;
   /** When the processor received the submission. */
   receivedAt: Date;
   /** The submission's stored classification, or null when there is none yet. */
@@ -166,6 +168,9 @@ export class BusEmail implements Action {
           recipients,
           sendgrid_template_id: s.templateId,
           version: "v3",
+          ...(context?.flowId
+            ? { correlationId: `${event.submissionId}:${context.flowId}` }
+            : {}),
           ...(s.fromEmail
             ? {
                 from: s.fromName
