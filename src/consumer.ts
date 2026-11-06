@@ -6,6 +6,7 @@ import {
 } from "@platformatic/kafka";
 import {
   InvalidEvent,
+  SUBMISSIONS_TOPIC,
   parseEmailSent,
   parseEvent,
   type EmailSent,
@@ -84,8 +85,11 @@ export async function consume(
   signal: AbortSignal,
 ): Promise<void> {
   const emailSentTopic = config.EMAIL_SENT_TOPIC;
+  // config() already rejects this; fail fast for any other Config, as submissions would be lost.
+  if (emailSentTopic === SUBMISSIONS_TOPIC)
+    throw new Error("Invalid configuration: EMAIL_SENT_TOPIC");
   const topics = [
-    "form.submitted",
+    SUBMISSIONS_TOPIC,
     ...(emailSentTopic ? [emailSentTopic] : []),
   ];
   const consumer = new Consumer({

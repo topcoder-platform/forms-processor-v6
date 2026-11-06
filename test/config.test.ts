@@ -42,4 +42,9 @@ test("SendGrid send reports are consumed from external.action.email.sent unless 
     config({ ...base, EMAIL_SENT_TOPIC: "email.sent" }).EMAIL_SENT_TOPIC,
     "email.sent",
   );
+  // The submissions topic would route real submissions to the email-sent handler.
+  assert.throws(
+    () => config({ ...base, EMAIL_SENT_TOPIC: " form.submitted " }),
+    /^Error: Invalid configuration: EMAIL_SENT_TOPIC$/,
+  );
 });

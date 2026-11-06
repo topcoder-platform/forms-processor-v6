@@ -1,6 +1,7 @@
 import type { AiConfig } from "./ai.js";
 import type { BusConfig } from "./bus.js";
 import { z } from "zod";
+import { SUBMISSIONS_TOPIC } from "./contracts.js";
 const boolean = z
   .enum(["true", "false"])
   .transform((value) => value === "true");
@@ -32,7 +33,13 @@ const schema = z.object({
   KAFKA_SSL_ENABLED: boolean.default(false),
   KAFKA_FROM_BEGINNING: boolean.default(true),
   /** email-service-v6's SendGrid send reports; empty disables recording SendGrid message IDs. */
-  EMAIL_SENT_TOPIC: z.string().trim().default("external.action.email.sent"),
+  // Sharing the submissions topic would route real submissions to the email-sent handler,
+  // which would discard them as invalid and commit their offsets.
+  EMAIL_SENT_TOPIC: z
+    .string()
+    .trim()
+    .default("external.action.email.sent")
+    .refine((topic) => topic !== SUBMISSIONS_TOPIC),
   BUSAPI_URL: z.string().optional(),
   AUTH0_URL: z.string().optional(),
   AUTH0_AUDIENCE: z.string().optional(),

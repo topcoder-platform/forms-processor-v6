@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+/** forms-api-v6's fixed submission topic. */
+export const SUBMISSIONS_TOPIC = "form.submitted";
+/** The only producer of email-sent reports. */
+export const EMAIL_SENT_ORIGINATOR = "tc-email-service";
+
 const scalarSchema = z.union([z.string(), z.number().finite(), z.boolean()]);
 export const answerSchema = z.union([scalarSchema, z.array(z.string())]);
 export const submissionSchema = z.object({
@@ -13,7 +18,7 @@ export const submissionSchema = z.object({
 });
 export type Submission = z.infer<typeof submissionSchema>;
 const envelopeSchema = z.object({
-  topic: z.literal("form.submitted"),
+  topic: z.literal(SUBMISSIONS_TOPIC),
   originator: z.literal("forms-api-v6"),
   "mime-type": z.literal("application/json"),
   timestamp: z.iso.datetime({ offset: true }),
@@ -48,7 +53,8 @@ export interface EmailSent {
 }
 const emailSentEnvelopeSchema = z.object({
   topic: z.string().min(1),
-  originator: z.string().min(1),
+  // Another producer on the topic must not be able to write message IDs onto deliveries.
+  originator: z.literal(EMAIL_SENT_ORIGINATOR),
   "mime-type": z.literal("application/json"),
   timestamp: z.iso.datetime({ offset: true }),
   payload: z.object({

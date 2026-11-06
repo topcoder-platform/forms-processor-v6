@@ -222,7 +222,9 @@ as SendGrid log links.
 
 Reports are at-least-once: duplicates and email-service retries overwrite `emailSentAt`
 and keep the latest non-null ID. Malformed reports, and reports for emails other services
-sent or for deleted deliveries, are logged without content and committed. The topic must
+sent or for deleted deliveries, are logged without content and committed. Only envelopes
+whose `originator` is `tc-email-service` are accepted. `EMAIL_SENT_TOPIC` must not be
+`form.submitted` (startup fails), as submissions would otherwise be discarded. The topic must
 exist on the cluster (the consumer does not auto-create topics).
 
 ## Reliability and operations

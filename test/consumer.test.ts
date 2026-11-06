@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ingest, ingestEmailSent } from "../src/consumer.js";
+import { consume, ingest, ingestEmailSent } from "../src/consumer.js";
+import { config } from "../src/config.js";
+import { parseEmailSent } from "../src/contracts.js";
 import { envelope } from "./fixtures.js";
 
 test("acknowledges only after durable persistence", async () => {
@@ -148,5 +150,36 @@ test("a failed email-sent write leaves the offset uncommitted", async () => {
       },
     ),
     /DB failure/,
+  );
+});
+
+test("email-sent reports are only accepted from email-service-v6", () => {
+  const valid = JSON.parse(emailSent({}).toString("utf8"));
+  assert.equal(parseEmailSent(emailSent({})).flowId, "lets-talk-sales-email");
+  assert.throws(() =>
+    parseEmailSent(
+      Buffer.from(JSON.stringify({ ...valid, originator: "other-service" })),
+    ),
+  );
+});
+
+test("consume refuses to read email-sent reports from the submissions topic", async () => {
+  const settings = {
+    ...config({
+      DATABASE_URL: "postgresql://localhost/test",
+      KAFKA_URL: "localhost:9092",
+    }),
+    EMAIL_SENT_TOPIC: "form.submitted",
+  };
+  await assert.rejects(
+    consume(
+      settings,
+      {
+        enqueue: async () => assert.fail("must not consume"),
+        recordEmailSent: async () => assert.fail("must not consume"),
+      },
+      new AbortController().signal,
+    ),
+    /^Error: Invalid configuration: EMAIL_SENT_TOPIC$/,
   );
 });
