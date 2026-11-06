@@ -145,8 +145,8 @@ test("SendGrid send reports land on their delivery and keep the latest non-null 
   const {
     rows: [row],
   } = await pool.query(
-    'SELECT "sendgridMessageId", "emailSentAt" FROM forms."ProcessorDelivery" WHERE "submissionId" = $1',
-    [event.submissionId],
+    'SELECT "sendgridMessageId", "emailSentAt" FROM forms."ProcessorDelivery" WHERE "submissionId" = $1 AND "flowId" = $2',
+    [event.submissionId, sent.flowId],
   );
   assert.equal(row.sendgridMessageId, "sg-first");
   assert.equal(
