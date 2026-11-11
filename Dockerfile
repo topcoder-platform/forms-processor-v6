@@ -9,6 +9,9 @@ RUN npm run lint && npm run typecheck && npm test && npm run test:dependency-com
 
 FROM build AS production-dependencies
 RUN npm prune --install-links=true --omit=dev
+# This upstream development lock is not the installed dependency graph.
+# Keep actual package.json metadata and the consumer lockfile intact.
+RUN rm -f node_modules/tc-core-library-js/pnpm-lock.yaml
 
 FROM alpine:3.24 AS runtime
 ARG NODE_VERSION

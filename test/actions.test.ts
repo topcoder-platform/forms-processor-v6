@@ -4,6 +4,30 @@ import { BusEmail, type ActionContext } from "../src/actions.js";
 import { BusError, type BusEvent } from "../src/bus.js";
 import { event, settings } from "./fixtures.js";
 
+test("emails carry <submissionId>:<flowId> so email-service-v6 can report the SendGrid message back", async () => {
+  const published: BusEvent[] = [];
+  const action = new BusEmail({
+    postEvent: async (value) => {
+      published.push(value);
+    },
+  });
+  await action.execute(event, settings, {
+    flowId: "lets-talk-sales-email",
+    receivedAt: new Date(),
+    classification: null,
+    recentSubmitterSends: async () => 0,
+  });
+  await action.execute(event, settings);
+  assert.equal(
+    published[0]?.payload.correlationId,
+    `${event.submissionId}:lets-talk-sales-email`,
+  );
+  assert.equal(
+    Object.hasOwn(published[1]?.payload ?? {}, "correlationId"),
+    false,
+  );
+});
+
 test("publishes the standard v3 email envelope with trusted settings and nested answers", async () => {
   let published: BusEvent | undefined;
   await new BusEmail({

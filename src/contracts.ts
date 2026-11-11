@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+/** forms-api-v6's fixed submission topic. */
+export const SUBMISSIONS_TOPIC = "form.submitted";
+/** The only producer of email-sent reports. */
+export const EMAIL_SENT_ORIGINATOR = "tc-email-service";
+
 const scalarSchema = z.union([z.string(), z.number().finite(), z.boolean()]);
 export const answerSchema = z.union([scalarSchema, z.array(z.string())]);
 export const submissionSchema = z.object({
@@ -13,7 +18,7 @@ export const submissionSchema = z.object({
 });
 export type Submission = z.infer<typeof submissionSchema>;
 const envelopeSchema = z.object({
-  topic: z.literal("form.submitted"),
+  topic: z.literal(SUBMISSIONS_TOPIC),
   originator: z.literal("forms-api-v6"),
   "mime-type": z.literal("application/json"),
   timestamp: z.iso.datetime({ offset: true }),
@@ -33,6 +38,47 @@ export function parseEvent(value: Buffer | null | undefined): Submission {
   try {
     return envelopeSchema.parse(JSON.parse(value?.toString("utf8") ?? ""))
       .payload;
+  } catch {
+    throw new InvalidEvent();
+  }
+}
+
+/** A SendGrid send reported by email-service-v6 for an email this processor published. */
+export interface EmailSent {
+  submissionId: string;
+  flowId: string;
+  /** SendGrid's X-Message-Id; null when SendGrid returned none. */
+  sendgridMessageId: string | null;
+  sentAt: Date;
+}
+const emailSentEnvelopeSchema = z.object({
+  topic: z.string().min(1),
+  // Another producer on the topic must not be able to write message IDs onto deliveries.
+  originator: z.literal(EMAIL_SENT_ORIGINATOR),
+  "mime-type": z.literal("application/json"),
+  timestamp: z.iso.datetime({ offset: true }),
+  payload: z.object({
+    // `<submissionId>:<flowId>`, as set by BusEmail.
+    correlationId: z.string().regex(/^[0-9a-fA-F-]{36}:[^\s:]{1,100}$/),
+    sendgridMessageId: z.string().min(1).max(255).nullable(),
+    templateId: z.string().min(1).max(255),
+    sentAt: z.iso.datetime({ offset: true }),
+  }),
+});
+
+/** Parse an email-sent Bus envelope; throws InvalidEvent without input data for malformed or foreign correlation IDs. */
+export function parseEmailSent(value: Buffer | null | undefined): EmailSent {
+  try {
+    const { payload } = emailSentEnvelopeSchema.parse(
+      JSON.parse(value?.toString("utf8") ?? ""),
+    );
+    const separator = payload.correlationId.indexOf(":");
+    return {
+      submissionId: z.uuid().parse(payload.correlationId.slice(0, separator)),
+      flowId: payload.correlationId.slice(separator + 1),
+      sendgridMessageId: payload.sendgridMessageId,
+      sentAt: new Date(payload.sentAt),
+    };
   } catch {
     throw new InvalidEvent();
   }
