@@ -27,7 +27,7 @@ The pinned executor is `cimg/aws@sha256:4cf3768db00ddf9bc439b8c84e8a60c11a14edf8
 
 ## Processor release behavior
 
-Application lint/type checks, routing/retry unit tests, PostgreSQL integration tests and compilation remain prerequisites. Deployment tests now run the pinned shared security/rollout suite. The old SSM-discovery release implementation and its discovery-specific tests are replaced. Existing ECS runtime references are preserved byte-for-byte instead of discovering optional settings during a release; additions/removals belong in the infrastructure that owns the task. Forms API schema migration must still precede a processor release. Zero-capacity activation/bootstrap is an administrator operation: the deployer refuses it.
+Application lint/type checks, routing/retry unit tests, PostgreSQL integration tests and compilation remain prerequisites. Deployment tests now run the pinned shared security/rollout suite. The old SSM-discovery release implementation and its discovery-specific tests are replaced. Existing ECS runtime references are preserved byte-for-byte instead of discovering optional settings during a release; additions/removals belong in the infrastructure that owns the task. The processor adapter now runs the pinned Forms API migration image before every dev/prod rollout; see [migration execution](MIGRATIONS.md) for the additional IAM prerequisites. Zero-capacity activation/bootstrap is an administrator operation: the deployer refuses it.
 
 ## Infrastructure source
 

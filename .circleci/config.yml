@@ -36,12 +36,25 @@ jobs:
     - setup_remote_docker
     - checkout-suite
     - run:
-        name: Build committed source without AWS or broker credentials
+        name: Build processor and pinned Forms API migration images without credentials
         command: |
           set -euo pipefail
           python3 -I /tmp/tc-deploy-scripts/build_image.py --dockerfile Dockerfile --image forms-processor-v6:candidate
+          forms_api_revision="$(cat deploy/forms-api-revision)"
+          [[ "$forms_api_revision" =~ ^[0-9a-f]{40}$ ]]
+          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
+          git init --quiet /tmp/forms-api-migrations
+          git -C /tmp/forms-api-migrations remote add origin https://github.com/topcoder-platform/forms-api-v6.git
+          git -C /tmp/forms-api-migrations -c credential.helper= fetch --quiet --depth 1 origin "$forms_api_revision"
+          git -C /tmp/forms-api-migrations checkout --quiet --detach FETCH_HEAD
+          test "$(git -C /tmp/forms-api-migrations rev-parse HEAD)" = "$forms_api_revision"
+          test -f /tmp/forms-api-migrations/prisma/migrations/20261104010000_processor_delivery_sendgrid_message/migration.sql
+          (
+            cd /tmp/forms-api-migrations
+            CIRCLE_SHA1="$forms_api_revision" python3 -I /tmp/tc-deploy-scripts/build_image.py --dockerfile Dockerfile --target migrate --image forms-processor-v6:migrate-candidate
+          )
           mkdir -p /tmp/release
-          docker save --output /tmp/release/image.tar forms-processor-v6:candidate
+          docker save --output /tmp/release/image.tar forms-processor-v6:candidate forms-processor-v6:migrate-candidate
         no_output_timeout: 30m
     - persist_to_workspace:
         root: /tmp/release
@@ -64,7 +77,7 @@ jobs:
     - attach_workspace:
         at: /tmp/release
     - run:
-        name: Promote a scanned digest with repository-bound OIDC
+        name: Scan both images, migrate the database, then promote the processor
         command: |
           set +x
           set -euo pipefail
@@ -72,6 +85,9 @@ jobs:
           docker load --input /tmp/release/image.tar
           python3 -I deploy/release.py "deploy/${DEPLOY_ENV}.json"
         no_output_timeout: 45m
+    - store_artifacts:
+        path: deploy/release-<< parameters.environment >>.json
+        destination: release
   quality:
     docker:
     - image: node@sha256:9f94d34c787165dca03b74e5bf9c3bf90e8de79b19aa3d87fe1fa1694bf75c89
@@ -95,10 +111,14 @@ jobs:
   deployment-checks:
     executor: reviewed
     steps:
+    - checkout-source
     - checkout-suite
     - run:
         name: Test the pinned deployment security and rollout checks
         command: python3 -m unittest discover -s /tmp/tc-deploy-scripts/tests -q
+    - run:
+        name: Verify migration failures prevent processor rollout in dev and prod
+        command: python3 -m unittest discover -s deploy/tests -v
 workflows:
   release:
     jobs:
