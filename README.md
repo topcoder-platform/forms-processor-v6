@@ -67,7 +67,9 @@ additive key correction. Keep each fixture identical to its API migration.
 
 The canonical Prisma models/migration live in **forms-api-v6**. Deploy migration
 `20260928020000_processor_flows` before deploying the worker; the worker fails
-startup if tables are missing. It does not run migrations or modify form schemas.
+startup if tables are missing. The runtime does not run migrations; the dev/prod
+deployment pipeline applies the pinned Forms API migrations before updating ECS
+(see [deployment migration gate](deploy/MIGRATIONS.md)).
 
 The website publishes the key `lets_talk`. Apply the follow-up migration
 `20261013010000_lets_talk_processor_key` to correct the original `lets-talk` seed;
