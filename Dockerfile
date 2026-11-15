@@ -1,4 +1,4 @@
-ARG NODE_VERSION=26.12.1
+ARG NODE_VERSION=26.13.1
 FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -18,7 +18,7 @@ ARG NODE_VERSION
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk upgrade --no-cache \
-    && apk add --no-cache ca-certificates "nodejs-current~${NODE_VERSION%%.*}" \
+    && apk add --no-cache ca-certificates "nodejs-current~${NODE_VERSION%%.*}" "nodejs-current>=26.13.1-r0" "zlib>=1.4-r0" \
     && addgroup -S -g 10001 app \
     && adduser -S -D -u 10001 -G app app
 COPY --from=production-dependencies --chown=app:app /app/package.json /app/package-lock.json ./
