@@ -312,6 +312,6 @@ for the API mapping, compatibility requirements, and rollout scope.
 
 ## Security maintenance
 
-The production image uses Node.js 26.12.1 on Alpine 3.24 and runs as UID 10001. It contains only compiled application code, production dependencies, and the RDS trust bundle. npm, development dependencies, and environment files are excluded. Dependencies install from the lockfile, with the shared core pinned to an immutable patched revision.
+The production image uses Node.js 26.13.1 on Alpine 3.24 and runs as UID 10001. It contains only compiled application code, production dependencies, and the RDS trust bundle. npm, development dependencies, and environment files are excluded. Dependencies install from the lockfile, with the shared core pinned to an immutable patched revision.
 
 Run `npm run lint`, `npm run typecheck`, `npm test`, `npm run test:dependency-compat`, and `npm audit`. The dependency compatibility tests preserve the legacy matcher API while using its patched engine. Database integration tests continue to require a disposable database named `forms_processor_test`.
